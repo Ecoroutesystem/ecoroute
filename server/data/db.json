@@ -1,0 +1,53 @@
+{
+  "collections": [
+    {
+      "id": "COL-1024",
+      "time": "08:30",
+      "date": "2026-09-22",
+      "address": "Kilimani · 14 households",
+      "customer": "Kilimani Estate",
+      "driver": "Maya Okafor",
+      "vehicle": "KCA 482M",
+      "status": "In Progress"
+    },
+    {
+      "id": "COL-1025",
+      "time": "10:00",
+      "date": "2026-09-22",
+      "address": "Lavington · 28 households",
+      "customer": "Lavington Heights",
+      "driver": "Jon Bell",
+      "vehicle": "KDB 104A",
+      "status": "Scheduled"
+    }
+  ],
+  "customers": [
+    {
+      "id": "CUS-0081",
+      "name": "Kilimani Estate",
+      "phone": "+254 712 441 080",
+      "location": "Kigali Sector · Cell 04 · Village A",
+      "plan": "Weekly · 240 kg",
+      "balance": "$0.00",
+      "status": "Active"
+    }
+  ],
+  "companies": [
+    {
+      "id": "CMP-0018",
+      "name": "GreenLine Waste Services",
+      "registration": "REG-2026-104",
+      "location": "Kigali City",
+      "customers": 1284,
+      "status": "Approved"
+    },
+    {
+      "id": "CMP-0021",
+      "name": "CleanWay Collection Co.",
+      "registration": "REG-2026-119",
+      "location": "Musanze District",
+      "customers": 642,
+      "status": "Pending approval"
+    }
+  ]
+}
