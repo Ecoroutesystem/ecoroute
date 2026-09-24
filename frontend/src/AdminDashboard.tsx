@@ -4,7 +4,7 @@ import './App.css'
 
 type AdminDashboardProps = { onOpen: (view: string) => void }
 type Summary = { collectionsToday: number; completedCollections: number; activeHouseholds: number; pendingPayments: number; companiesTotal: number; companiesApproved: number; companiesPending: number; companiesCancelled: number; pendingCompanyRecords: Array<{ id: string; name: string; location: string }> }
-const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:4000'
+const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
 
 export default function AdminDashboard({ onOpen }: AdminDashboardProps) {
   const [summary, setSummary] = useState<Summary | null>(null)

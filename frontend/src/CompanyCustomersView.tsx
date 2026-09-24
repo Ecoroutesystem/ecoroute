@@ -4,7 +4,7 @@ import './App.css'
 
 type CustomerStatus = 'Active' | 'Suspended' | 'Archived'
 type Customer = { id: string; name: string; phone?: string; location: string; plan: string; balance: string; status: CustomerStatus }
-const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:4000'
+const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
 
 export default function CompanyCustomersView() {
   const [customers, setCustomers] = useState<Customer[]>([])
@@ -77,7 +77,7 @@ function AddCustomerForm({ onClose, onSuccess }: { onClose: () => void; onSucces
   const [plan, setPlan] = useState('Weekly · 240 kg')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:4000'
+  const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

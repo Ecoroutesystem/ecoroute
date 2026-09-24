@@ -2,12 +2,10 @@
   "name": "ecoroute",
   "private": true,
   "scripts": {
-    "install:all": "npm install --prefix client && npm install --prefix server",
-    "dev:client": "npm run dev --prefix client",
-    "dev:server": "npm run dev --prefix server",
-    "build": "npm run build --prefix client && npm run build --prefix server"
+    "install:all": "npm install --prefix frontend && npm install --prefix Backend",
+    "dev:frontend": "npm run dev --prefix frontend",
+    "dev:backend": "node --watch --env-file=Backend/.env Backend/server.js",
+    "build": "npm run build --prefix frontend"
   },
-  "dependencies": {
-    "@supabase/supabase-js": "^2.117.0"
-  }
+  "dependencies": {}
 }

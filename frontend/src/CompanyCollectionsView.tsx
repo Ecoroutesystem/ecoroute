@@ -4,7 +4,7 @@ import './App.css'
 
 type CollectionStatus = 'Scheduled' | 'In Progress' | 'Completed' | 'Missed' | 'Cancelled'
 type Collection = { id: string; time: string; date: string; address: string; customer: string; driver: string; vehicle: string; status: CollectionStatus }
-const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:4000'
+const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
 
 export default function CompanyCollectionsView() {
   const [collections, setCollections] = useState<Collection[]>([])
@@ -79,7 +79,7 @@ function AddCollectionForm({ onClose, onSuccess }: { onClose: () => void; onSucc
   const [vehicle, setVehicle] = useState('Unassigned')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:4000'
+  const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

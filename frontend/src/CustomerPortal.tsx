@@ -5,7 +5,7 @@ import './App.css'
 type CustomerPortalProps = { onLogout: () => void }
 type Customer = { id: string; name: string; phone?: string; location: string; plan: string; balance: string; status: string }
 type Collection = { id: string; time: string; date: string; address: string; customer: string; driver: string; vehicle: string; status: string }
-const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:4000'
+const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
 
 const navigation = [
   { label: 'Dashboard', icon: House },

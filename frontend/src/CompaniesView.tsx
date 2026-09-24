@@ -4,7 +4,7 @@ import './App.css'
 
 type CompanyStatus = 'Approved' | 'Pending approval' | 'Cancelled'
 type Company = { id: string; name: string; email?: string; phone?: string; address?: string; tin?: string; registration?: string; location: string; status: CompanyStatus }
-const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:4000'
+const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
 
 export default function CompaniesView() {
   const [companies, setCompanies] = useState<Company[]>([])

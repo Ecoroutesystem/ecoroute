@@ -7,7 +7,7 @@ import './App.css'
 type CompanyPortalProps = { onLogout: () => void }
 type Customer = { id: string; name: string; phone?: string; location: string; plan: string; balance: string; status: 'Active' | 'Suspended' | 'Archived' }
 type Collection = { id: string; time: string; date: string; address: string; customer: string; driver: string; vehicle: string; status: 'Scheduled' | 'In Progress' | 'Completed' | 'Missed' | 'Cancelled' }
-const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:4000'
+const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
 const navigation = [
   { label: 'Dashboard', icon: LayoutDashboard },
   { label: 'Customers', icon: Users },
