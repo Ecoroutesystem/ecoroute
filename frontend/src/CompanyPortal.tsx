@@ -16,6 +16,7 @@ const navigation = [
   { label: 'Payments', icon: CreditCard },
   { label: 'Staff', icon: Users },
   { label: 'Vehicles', icon: Truck },
+  { label: 'Users & vehicles', icon: Users },
   { label: 'Subscriptions', icon: Receipt },
   { label: 'Locations', icon: MapPin },
   { label: 'Reports', icon: BarChart3 },
@@ -31,6 +32,7 @@ const viewCopy: Record<string, { title: string; subtitle: string }> = {
   Payments: { title: 'Payments', subtitle: 'Track customer payments and outstanding balances.' },
   Staff: { title: 'Staff', subtitle: 'Manage your drivers and collection team.' },
   Vehicles: { title: 'Vehicles', subtitle: 'Track and maintain your fleet vehicles.' },
+  'Users & vehicles': { title: 'Users & vehicles', subtitle: 'Coordinate your field users and the vehicles they operate.' },
   Subscriptions: { title: 'Subscriptions', subtitle: 'Manage service plans and pricing tiers.' },
   Locations: { title: 'Locations', subtitle: 'Manage service zones and coverage areas.' },
   Reports: { title: 'Reports', subtitle: 'Analytics and performance insights.' },
@@ -91,6 +93,8 @@ export default function CompanyPortal({ onLogout }: CompanyPortalProps) {
             <CompanyStaffView />
           ) : activeView === 'Vehicles' ? (
             <CompanyVehiclesView />
+          ) : activeView === 'Users & vehicles' ? (
+            <CompanyUsersVehiclesView />
           ) : activeView === 'Settings' ? (
             <CompanySettingsView />
           ) : (
@@ -268,6 +272,20 @@ function CompanyView({ title, view }: { title: string; view: string }) {
 }
 
 type Vehicle = { id: string; plateNumber: string; type: string; capacity: string; status: 'Available' | 'Occupied' }
+
+function CompanyUsersVehiclesView() {
+  const users = [
+    { name: 'Amina Hassan', role: 'Operations Manager', vehicle: 'CBA-2451', status: 'Active' },
+    { name: 'David Otieno', role: 'Driver', vehicle: 'LRT-7740', status: 'On leave' },
+    { name: 'Grace Njeri', role: 'Collections Supervisor', vehicle: 'Unassigned', status: 'Active' },
+  ]
+  const vehicles = [
+    { plate: 'CBA-2451', type: 'Truck', status: 'Available' },
+    { plate: 'LRT-7740', type: 'Compactor', status: 'Occupied' },
+    { plate: 'JHY-9302', type: 'Van', status: 'Available' },
+  ]
+  return <><div className="admin-heading"><div><p className="section-kicker"><span className="kicker-line" /> OPERATIONS MANAGEMENT</p><h1>Users &amp; vehicles</h1><p>See team access and fleet assignments together before dispatch.</p></div><span className="admin-status"><i /> Connected</span></div><section className="admin-grid"><article className="admin-panel"><div className="admin-panel-heading"><div><h2>Users and assignments</h2><p>Every field user and their current vehicle.</p></div><button onClick={() => window.alert('Add users from the Staff module.')}>Manage users <ChevronRight size={14} /></button></div>{users.map((user) => <div className="staff-row" key={user.name}><div className="staff-badge">{user.name.split(' ').map((part) => part[0]).join('')}</div><div className="staff-main"><strong>{user.name}</strong><small>{user.role} · {user.vehicle}</small></div><span className={`staff-status ${user.status === 'Active' ? 'active' : 'leave'}`}>{user.status}</span></div>)}</article><article className="admin-panel"><div className="admin-panel-heading"><div><h2>Fleet availability</h2><p>Vehicles ready for the next route.</p></div><button onClick={() => window.alert('Add vehicles from the Vehicles module.')}>Manage fleet <ChevronRight size={14} /></button></div>{vehicles.map((vehicle) => <div className="vehicle-row" key={vehicle.plate}><div className="vehicle-badge"><Truck size={16} /></div><div className="vehicle-main"><strong>{vehicle.plate}</strong><small>{vehicle.type}</small></div><span className={`vehicle-status ${vehicle.status === 'Available' ? 'available' : 'occupied'}`}>{vehicle.status}</span></div>)}</article></section></>
+}
 
 function CompanyVehiclesView() {
   const [vehicles, setVehicles] = useState<Vehicle[]>([

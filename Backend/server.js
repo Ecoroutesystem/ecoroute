@@ -35,9 +35,14 @@ async function initializeDatabase() {
       password_hash TEXT NOT NULL,
       role VARCHAR(50) NOT NULL DEFAULT 'customer',
       full_name VARCHAR(255),
+      email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+      verification_token TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
+  await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE;');
+  await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token TEXT;');
+  await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_expires_at TIMESTAMPTZ;');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS admins (
@@ -88,12 +93,13 @@ async function initializeDatabase() {
   await pool.query('ALTER TABLE companies ADD COLUMN IF NOT EXISTS verification_document_name VARCHAR(255);');
 
   await pool.query(
-    `INSERT INTO users (email, password_hash, role, full_name)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO users (email, password_hash, role, full_name, email_verified)
+     VALUES ($1, $2, $3, $4, TRUE)
      ON CONFLICT (email) DO UPDATE SET
        password_hash = EXCLUDED.password_hash,
        role = 'admin',
-       full_name = EXCLUDED.full_name`,
+       full_name = EXCLUDED.full_name,
+       email_verified = TRUE`,
     [adminEmail, hashPassword(adminPassword), 'admin', 'System Administrator']
   );
 
@@ -151,7 +157,6 @@ app.post('/api/auth/login', async (req, res) => {
     if (user.password_hash !== hashPassword(password)) {
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
-
     return res.json({
       user: {
         id: user.id,
@@ -161,8 +166,64 @@ app.post('/api/auth/login', async (req, res) => {
       },
       message: 'Login successful.'
     });
+
   } catch (error) {
     return res.status(500).json({ error: 'Login failed.', details: error.message });
+  }
+});
+
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const fullName = String(req.body?.fullName ?? '').trim();
+    const email = String(req.body?.email ?? '').trim().toLowerCase();
+    const password = String(req.body?.password ?? '');
+    if (!fullName || !email || password.length < 8) {
+      return res.status(400).json({ error: 'Full name, email and a password of at least 8 characters are required.' });
+    }
+    const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (existing.rowCount > 0) return res.status(409).json({ error: 'An account with this email already exists.' });
+    await pool.query(
+      `INSERT INTO users (email, password_hash, role, full_name, email_verified)
+       VALUES ($1, $2, 'customer', $3, TRUE)`,
+      [email, hashPassword(password), fullName]
+    );
+    return res.status(201).json({ message: 'Customer account created. You can sign in now.' });
+  } catch (error) {
+    return res.status(500).json({ error: 'Customer registration failed.', details: error.message });
+  }
+});
+
+app.post('/api/auth/google', async (req, res) => {
+  try {
+    const credential = String(req.body?.credential ?? '');
+    if (!credential) return res.status(400).json({ error: 'Google verification credential is required.' });
+    const googleResponse = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`);
+    if (!googleResponse.ok) return res.status(401).json({ error: 'Google verification could not be completed.' });
+    const profile = await googleResponse.json();
+    if (process.env.GOOGLE_CLIENT_ID && profile.aud !== process.env.GOOGLE_CLIENT_ID) {
+      return res.status(401).json({ error: 'Google account verification is not valid for this application.' });
+    }
+    if (profile.email_verified !== 'true' || !profile.email) {
+      return res.status(401).json({ error: 'Google must verify your email before you can continue.' });
+    }
+    const email = String(profile.email).toLowerCase();
+    const fullName = String(profile.name || profile.email);
+    const existing = await pool.query('SELECT id, email, role, full_name FROM users WHERE email = $1', [email]);
+    let user = existing.rows[0];
+    if (!user) {
+      const created = await pool.query(
+        `INSERT INTO users (email, password_hash, role, full_name, email_verified)
+         VALUES ($1, $2, 'customer', $3, TRUE)
+         RETURNING id, email, role, full_name`,
+        [email, hashPassword(crypto.randomUUID()), fullName]
+      );
+      user = created.rows[0];
+    } else {
+      await pool.query('UPDATE users SET email_verified = TRUE WHERE id = $1', [user.id]);
+    }
+    return res.json({ user, message: 'Google sign-in successful.' });
+  } catch (error) {
+    return res.status(500).json({ error: 'Google sign-in failed.', details: error.message });
   }
 });
 
@@ -265,7 +326,13 @@ app.post('/api/companies', async (req, res) => {
         hashPassword(password),
         'Pending approval'
       ]
-      [email, hashPassword(password), 'company', companyName]
+    );
+
+    await pool.query(
+      `INSERT INTO users (email, password_hash, role, full_name, email_verified)
+       VALUES ($1, $2, 'company', $3, TRUE)
+       ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash, role = 'company', full_name = EXCLUDED.full_name`,
+      [email, hashPassword(password), companyName]
     );
 
     return res.status(201).json({
