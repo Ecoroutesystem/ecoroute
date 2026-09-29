@@ -12,6 +12,7 @@ const { Pool } = pg;
 const port = Number(process.env.PORT || 5001);
 const adminEmail = (process.env.ADMIN_EMAIL || 'diope2diope@gmail.com').toLowerCase();
 const adminPassword = process.env.ADMIN_PASSWORD || 'Diope00132';
+const geminiModel = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
 app.use(cors());
 app.use(express.json());
@@ -25,6 +26,45 @@ const pool = new Pool({
 });
 
 const hashPassword = (value) => crypto.createHash('sha256').update(String(value)).digest('hex');
+const adminTokenSecret = process.env.ADMIN_TOKEN_SECRET || hashPassword(adminPassword);
+
+function createAdminToken(user) {
+  const payload = Buffer.from(JSON.stringify({
+    id: user.id,
+    email: user.email,
+    role: user.role,
+    expiresAt: Date.now() + 8 * 60 * 60 * 1000,
+  })).toString('base64url');
+  const signature = crypto.createHmac('sha256', adminTokenSecret).update(payload).digest('base64url');
+  return `${payload}.${signature}`;
+}
+
+function requireAdmin(req, res, next) {
+  const token = req.get('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1];
+  if (!token) return res.status(401).json({ error: 'Admin authentication is required.' });
+
+  const [payload, signature, extra] = token.split('.');
+  if (!payload || !signature || extra) {
+    return res.status(401).json({ error: 'Admin session is invalid or expired.' });
+  }
+
+  const expectedSignature = crypto.createHmac('sha256', adminTokenSecret).update(payload).digest();
+  const providedSignature = Buffer.from(signature, 'base64url');
+  if (providedSignature.length !== expectedSignature.length || !crypto.timingSafeEqual(providedSignature, expectedSignature)) {
+    return res.status(401).json({ error: 'Admin session is invalid or expired.' });
+  }
+
+  try {
+    const admin = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (admin.role !== 'admin' || !Number.isFinite(admin.expiresAt) || admin.expiresAt <= Date.now()) {
+      return res.status(401).json({ error: 'Admin session is invalid or expired.' });
+    }
+    req.admin = admin;
+    return next();
+  } catch {
+    return res.status(401).json({ error: 'Admin session is invalid or expired.' });
+  }
+}
 
 async function initializeDatabase() {
   await pool.query('CREATE EXTENSION IF NOT EXISTS pgcrypto;');
@@ -44,6 +84,7 @@ async function initializeDatabase() {
   await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE;');
   await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token TEXT;');
   await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_expires_at TIMESTAMPTZ;');
+  await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id);');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS admins (
@@ -92,6 +133,7 @@ async function initializeDatabase() {
   await pool.query('ALTER TABLE companies ADD COLUMN IF NOT EXISTS rdb_number VARCHAR(255);');
   await pool.query('ALTER TABLE companies ADD COLUMN IF NOT EXISTS document_company_name VARCHAR(255);');
   await pool.query('ALTER TABLE companies ADD COLUMN IF NOT EXISTS verification_document_name VARCHAR(255);');
+  await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS company_id UUID REFERENCES companies(id);');
 
   await pool.query(
     `INSERT INTO users (email, password_hash, role, full_name, email_verified)
