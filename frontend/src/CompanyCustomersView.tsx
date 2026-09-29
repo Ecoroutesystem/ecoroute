@@ -4,7 +4,7 @@ import './App.css'
 
 type CustomerStatus = 'Active' | 'Suspended' | 'Archived'
 type Customer = { id: string; name: string; phone?: string; location: string; plan: string; balance: string; status: CustomerStatus }
-const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
+const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5001'
 
 export default function CompanyCustomersView() {
   const [customers, setCustomers] = useState<Customer[]>([])
@@ -60,7 +60,7 @@ export default function CompanyCustomersView() {
     ['Total customers', customers.length, 'green'],
     ['Active customers', customers.filter((c) => c.status === 'Active').length, 'blue'],
     ['Suspended customers', customers.filter((c) => c.status === 'Suspended').length, 'yellow'],
-    ['Pending payments', customers.filter((c) => c.balance !== '$0.00').length, 'coral'],
+    ['Pending payments', customers.filter((c) => parseFloat(c.balance.replace(/[^0-9.]/g, '') || '0') > 0).length, 'coral'],
   ] as const
 
   return <><div className="admin-heading"><div><p className="section-kicker"><span className="kicker-line" /> CUSTOMER MANAGEMENT</p><h1>Customers</h1><p>Manage your household customers and service plans.</p></div><button className="admin-action" onClick={() => setShowAddForm(true)}><Plus size={14} /> Add customer</button></div>{error && <p className="settings-error company-error">{error}</p>}<section className="company-stats">{stats.map(([label, value, tone]) => <div className={`company-stat ${tone}`} key={label}><small>{label}</small><strong>{loading ? '...' : value}</strong><span>Database record</span></div>)}</section><section className="admin-panel company-list"><div className="admin-panel-heading"><div><h2>Customer list</h2><p>View, manage or update customer accounts.</p></div><button onClick={() => void loadCustomers()}>Refresh <ChevronRight size={14} /></button></div>{loading ? <p className="company-loading">Loading customers...</p> : customers.length === 0 ? <p className="company-loading">No customers registered yet.</p> : customers.map((customer) => <div className="company-status-row" key={customer.id}><span className="customer-symbol"><span>{customer.name.slice(0, 2).toUpperCase()}</span></span><div><strong>{customer.name}</strong><small>{customer.location} · {customer.plan}</small></div><span className={`company-status ${customer.status === 'Active' ? 'green' : customer.status === 'Suspended' ? 'yellow' : 'coral'}`}>{customer.status}</span><div className="company-actions"><button className="view-action" onClick={() => setSelectedCustomer(customer)}><Eye size={13} /> View</button>{customer.status !== 'Active' && <button className="approve-action" onClick={() => void updateStatus(customer, 'Active')}><Check size={13} /> Activate</button>}{customer.status !== 'Suspended' && <button className="cancel-action" onClick={() => void updateStatus(customer, 'Suspended')}><X size={13} /> Suspend</button>}<button className="delete-action" onClick={() => void deleteCustomer(customer)}><Trash2 size={13} /> Delete</button></div></div>)}</section>{selectedCustomer && <CustomerDetails customer={selectedCustomer} onClose={() => setSelectedCustomer(null)} onDelete={() => void deleteCustomer(selectedCustomer)} />}{showAddForm && <AddCustomerForm onClose={() => setShowAddForm(false)} onSuccess={() => { setShowAddForm(false); void loadCustomers() }} />}</>
@@ -77,7 +77,7 @@ function AddCustomerForm({ onClose, onSuccess }: { onClose: () => void; onSucces
   const [plan, setPlan] = useState('Weekly · 240 kg')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
+  const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5001'
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

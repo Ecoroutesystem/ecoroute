@@ -1,13 +1,14 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
-import { BarChart3, Bell, Building2, CalendarDays, Camera, ChevronRight, CreditCard, FileText, KeyRound, LayoutDashboard, LogOut, MapPin, Plus, Receipt, Settings, Truck, Users, Waypoints, X } from 'lucide-react'
+import { BarChart3, Bell, Building2, CalendarDays, Camera, ChevronRight, CreditCard, FileText, KeyRound, LayoutDashboard, LogOut, MapPin, Menu, Plus, Receipt, Settings, Truck, Users, Waypoints, X } from 'lucide-react'
 import CompanyCustomersView from './CompanyCustomersView'
 import CompanyCollectionsView from './CompanyCollectionsView'
+import { CompanyPaymentsView } from './PaymentViews'
 import './App.css'
 
 type CompanyPortalProps = { onLogout: () => void }
 type Customer = { id: string; name: string; phone?: string; location: string; plan: string; balance: string; status: 'Active' | 'Suspended' | 'Archived' }
 type Collection = { id: string; time: string; date: string; address: string; customer: string; driver: string; vehicle: string; status: 'Scheduled' | 'In Progress' | 'Completed' | 'Missed' | 'Cancelled' }
-const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
+const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5001'
 const navigation = [
   { label: 'Dashboard', icon: LayoutDashboard },
   { label: 'Customers', icon: Users },
@@ -42,19 +43,21 @@ const viewCopy: Record<string, { title: string; subtitle: string }> = {
 
 export default function CompanyPortal({ onLogout }: CompanyPortalProps) {
   const [activeView, setActiveView] = useState('Dashboard')
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const current = viewCopy[activeView]
 
   return (
     <div className="admin-portal">
-      <aside className="admin-sidebar">
+      <aside className={`admin-sidebar ${mobileMenuOpen ? 'mobile-open' : ''}`}>
         <div className="admin-brand">
           <span className="logo-mark"><Building2 size={17} /></span>
           <span><strong>EcoRoute</strong><small>Company workspace</small></span>
+          <button className="mobile-menu-toggle" onClick={() => setMobileMenuOpen((open) => !open)} aria-label={mobileMenuOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={mobileMenuOpen}><span>{mobileMenuOpen ? 'Close' : 'Menu'}</span>{mobileMenuOpen ? <X size={18} /> : <Menu size={18} />}</button>
         </div>
         <p className="portal-label">Company workspace</p>
         <nav className="admin-nav">
           {navigation.map(({ label, icon: Icon }) => (
-            <button key={label} className={activeView === label ? 'active' : ''} onClick={() => setActiveView(label)}>
+            <button key={label} className={activeView === label ? 'active' : ''} onClick={() => { setActiveView(label); setMobileMenuOpen(false) }}>
               <Icon size={17} />
               <span>{label}</span>
             </button>
@@ -89,6 +92,8 @@ export default function CompanyPortal({ onLogout }: CompanyPortalProps) {
             <CompanyCustomersView />
           ) : activeView === 'Collections' ? (
             <CompanyCollectionsView />
+          ) : activeView === 'Payments' ? (
+            <CompanyPaymentsView />
           ) : activeView === 'Staff' ? (
             <CompanyStaffView />
           ) : activeView === 'Vehicles' ? (
@@ -160,7 +165,7 @@ function CompanyDashboard({ onOpen }: { onOpen: (view: string) => void }) {
   const activeCustomers = customers.filter((customer) => customer.status === 'Active').length
   const scheduledCollections = collections.filter((collection) => collection.status === 'Scheduled').length
   const inProgressCollections = collections.filter((collection) => collection.status === 'In Progress').length
-  const pendingPayments = customers.filter((customer) => customer.balance !== '$0.00').length
+  const pendingPayments = customers.filter((customer) => parseFloat(customer.balance.replace(/[^0-9.]/g, '') || '0') > 0).length
   const upcomingCollections = [...collections]
     .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time))
     .slice(0, 3)

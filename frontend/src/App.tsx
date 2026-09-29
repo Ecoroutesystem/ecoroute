@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react'
 import { ArrowRight, BarChart3, Bell, Bot, Building2, CalendarDays, Check, ChevronLeft, FileCheck2, Leaf, Map, Menu, PackageCheck, Receipt, Route, Truck, UserCircle2, Users, X } from 'lucide-react'
 import { motion } from 'framer-motion'
 import CustomerPortal from './CustomerPortal'
@@ -10,6 +10,7 @@ type Dialog = 'register' | 'signin' | null
 type GoogleIdentity = { accounts: { id: { initialize: (options: { client_id: string; callback: (response: { credential: string }) => void }) => void; renderButton: (element: HTMLElement, options: { theme: string; size: string; width: number }) => void } } }
 declare global { interface Window { google?: GoogleIdentity } }
 const adminEmail = (import.meta.env.VITE_ADMIN_EMAIL as string | undefined)?.toLowerCase() ?? 'diope2diope@gmail.com'
+const CustomerLocationMap = lazy(() => import('./CustomerLocationMap'))
 
 const features = [
   { icon: CalendarDays, title: 'Scheduling that stays clear', text: 'Build recurring or one-off collections around dates, locations, teams and vehicles.' },
@@ -31,28 +32,69 @@ function App() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [customerPortal, setCustomerPortal] = useState(false)
+  const [customerId, setCustomerId] = useState('')
   const [adminPortal, setAdminPortal] = useState(false)
+  const [adminToken, setAdminToken] = useState('')
   const [companyPortal, setCompanyPortal] = useState(false)
   const [customerRegister, setCustomerRegister] = useState(false)
   const [authError, setAuthError] = useState('')
   const [forgotPassword, setForgotPassword] = useState(false)
   const openDialog = (next: Exclude<Dialog, null>) => { setDialog(next); setSubmitted(false); setForgotPassword(false); setAuthError(''); setMobileOpen(false) }
   const closeDialog = () => setDialog(null)
-  const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
+  const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5001'
   const googleSignIn = async (credential?: string) => {
     if (!credential) { setAuthError('Google verification is unavailable until a Google client ID is configured.'); return }
     const response = await fetch(`${apiBase}/api/auth/google`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ credential }) })
-    const result = await response.json() as { error?: string; user?: { role?: string } }
+    const result = await response.json() as { error?: string; user?: { role?: string; customerId?: string } }
     if (!response.ok) { setAuthError(result.error ?? 'Google verification failed.'); return }
     setDialog(null)
-    if (result.user?.role === 'customer') setCustomerPortal(true)
+    if (result.user?.role === 'customer') { setCustomerId(result.user.customerId ?? ''); setCustomerPortal(true) }
   }
-  const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const form = new FormData(event.currentTarget); if (dialog === 'signin') { const email = String(form.get('email') ?? '').trim().toLowerCase(); if (forgotPassword) { setAuthError('Password reset is handled by the backend administrator.'); setSubmitted(true); return } const password = String(form.get('password') ?? ''); const response = await fetch(`${apiBase}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) }); const result = await response.json() as { error?: string; user?: { role?: string } }; if (!response.ok) { setAuthError(result.error ?? 'Unable to sign in. Check your email and password.'); return } const role = String(result.user?.role ?? '').toLowerCase(); setAuthError(''); setDialog(null); if (email === adminEmail || role === 'admin') setAdminPortal(true); else if (role === 'company') setCompanyPortal(true); else setCustomerPortal(true); return } const password = String(form.get('password') ?? ''); const confirmPassword = String(form.get('confirmPassword') ?? ''); if (password !== confirmPassword) { setAuthError('Passwords do not match.'); return } if (password.length < 8) { setAuthError('Password must contain at least 8 characters.'); return } const registration = { companyName: String(form.get('companyName') ?? ''), email: String(form.get('email') ?? ''), phone: String(form.get('phone') ?? ''), address: String(form.get('address') ?? ''), tin: String(form.get('tin') ?? ''), password, confirmPassword }; const response = await fetch(`${apiBase}/api/companies`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(registration) }); const result = await response.json() as { error?: string }; if (!response.ok) { setAuthError(result.error ?? 'Company registration could not be saved.'); return } setAuthError(''); setSubmitted(true) }
-  const submitCustomer = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const form = new FormData(event.currentTarget); const response = await fetch(`${apiBase}/api/auth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fullName: form.get('fullName'), email: form.get('email'), password: form.get('password') }) }); const result = await response.json() as { error?: string; message?: string }; if (!response.ok) { setAuthError(result.error ?? 'Customer registration failed.'); return } setCustomerRegister(false); setDialog('signin'); setAuthError(result.message ?? 'Customer account created. You can sign in now.') }
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    if (dialog === 'signin') {
+      const email = String(form.get('email') ?? '').trim().toLowerCase()
+      if (forgotPassword) { setAuthError('Password reset is handled by the backend administrator.'); setSubmitted(true); return }
+      const password = String(form.get('password') ?? '')
+      const response = await fetch(`${apiBase}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) })
+      const result = await response.json() as { error?: string; user?: { role?: string; customerId?: string }; adminToken?: string }
+      if (!response.ok) { setAuthError(result.error ?? 'Unable to sign in. Check your email and password.'); return }
+      const role = String(result.user?.role ?? '').toLowerCase()
+      setAuthError('')
+      setDialog(null)
+      if (email === adminEmail || role === 'admin') { setAdminToken(result.adminToken ?? ''); setAdminPortal(true) }
+      else if (role === 'company') setCompanyPortal(true)
+      else { setCustomerId(result.user?.customerId ?? ''); setCustomerPortal(true) }
+      return
+    }
+    const password = String(form.get('password') ?? '')
+    const confirmPassword = String(form.get('confirmPassword') ?? '')
+    if (password !== confirmPassword) { setAuthError('Passwords do not match.'); return }
+    if (password.length < 8) { setAuthError('Password must contain at least 8 characters.'); return }
+    const registration = { companyName: String(form.get('companyName') ?? ''), email: String(form.get('email') ?? ''), phone: String(form.get('phone') ?? ''), address: String(form.get('address') ?? ''), tin: String(form.get('tin') ?? ''), password, confirmPassword }
+    const response = await fetch(`${apiBase}/api/companies`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(registration) })
+    const result = await response.json() as { error?: string }
+    if (!response.ok) { setAuthError(result.error ?? 'Company registration could not be saved.'); return }
+    setAuthError('')
+    setSubmitted(true)
+  }
+  const submitCustomer = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    const registration = Object.fromEntries(form.entries())
+    const response = await fetch(`${apiBase}/api/auth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(registration) })
+    const result = await response.json() as { error?: string; message?: string; customerId?: string }
+    if (!response.ok) { setAuthError(result.error ?? 'Customer registration failed.'); return }
+    setCustomerId(result.customerId ?? '')
+    setCustomerRegister(false)
+    setCustomerPortal(true)
+    setAuthError('')
+  }
 
-  if (adminPortal) return <AdminPortal email={adminEmail} onLogout={() => setAdminPortal(false)} />
+  if (adminPortal) return <AdminPortal email={adminEmail} token={adminToken} onLogout={() => { setAdminPortal(false); setAdminToken('') }} />
   if (companyPortal) return <CompanyPortal onLogout={() => setCompanyPortal(false)} />
-  if (customerPortal) return <CustomerPortal onLogout={() => setCustomerPortal(false)} />
+  if (customerPortal) return <CustomerPortal customerId={customerId} onLogout={() => { setCustomerPortal(false); setCustomerId('') }} />
   return <div className="landing-page">
     <header className="site-header"><a href="#top" className="site-logo" aria-label="EcoRoute home"><span className="logo-mark"><Leaf size={19} /></span><span><strong>Isuku Route</strong><small>AI-Powered EcoRoute</small></span></a><button className="mobile-toggle" onClick={() => setMobileOpen(!mobileOpen)} aria-label="Toggle navigation">{mobileOpen ? <X size={22} /> : <Menu size={22} />}</button><nav className={mobileOpen ? 'site-nav nav-open' : 'site-nav'}>{['How It Works', 'Features', 'For Companies', 'For Customers', 'About', 'Contact'].map((label) => <a key={label} href={`#${label.toLowerCase().replaceAll(' ', '-')}`} onClick={() => setMobileOpen(false)}>{label}</a>)}<div className="nav-actions"><button className="signin-link" onClick={() => openDialog('signin')}>Sign In</button><button className="header-cta" onClick={() => openDialog('register')}>Register Company <ArrowRight size={15} /></button></div></nav></header>
     <main id="top">
@@ -75,8 +117,46 @@ function MiniMetric({ label, value, tone }: { label: string; value: string; tone
 function Step({ number, title, text }: { number: string; title: string; text: string }) { return <div className="step"><span>{number}</span><div><h3>{title}</h3><p>{text}</p></div></div> }
 function CheckItem({ text }: { text: string }) { return <div className="check-item"><span><Check size={13} /></span>{text}</div> }
 function CustomerRegisterDialog({ authError, onClose, onSubmit }: { authError: string; onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void | Promise<void> }) {
-  return <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><form className="dialog" onSubmit={onSubmit}><button type="button" className="dialog-close" onClick={onClose} aria-label="Close"><X size={18} /></button><p className="registration-kicker">FOR CUSTOMERS</p><h2>Create your customer account</h2><p className="registration-copy">Register with your email or continue with Google. Your account must be verified before it is enabled.</p><div className="signin-fields"><label>Full name<input name="fullName" type="text" placeholder="e.g. Jean Romeo" required /></label><label>Email address<input name="email" type="email" placeholder="you@example.com" required /></label><label>Password<input name="password" type="password" minLength={8} placeholder="At least 8 characters" required /></label></div>{authError && <p className="auth-error" role="alert">{authError}</p>}<div className="dialog-actions"><button type="button" className="dialog-cancel" onClick={onClose}>Cancel</button><button className="hero-primary" type="submit">Create account <ArrowRight size={15} /></button></div></form></div>
+  const [step, setStep] = useState(1)
+  const [coordinates, setCoordinates] = useState<{ latitude: number; longitude: number } | null>(null)
+  const [locationError, setLocationError] = useState('')
+  const [formError, setFormError] = useState('')
+  const [formElement, setFormElement] = useState<HTMLFormElement | null>(null)
+  const [details, setDetails] = useState<Record<string, string>>({})
+  const finalSubmitAllowed = useRef(false)
+  const position: [number, number] = coordinates ? [coordinates.latitude, coordinates.longitude] : [-1.9441, 30.0619]
+  const validateStep = () => {
+    if (!formElement) return
+    if (!formElement.reportValidity()) return
+    const submittedValues = Object.fromEntries(new FormData(formElement).entries())
+    setDetails((current) => ({ ...current, ...Object.fromEntries(Object.entries(submittedValues).map(([key, value]) => [key, String(value)])) }))
+    if (step === 1) {
+      if (submittedValues.password !== submittedValues.confirmPassword) { setFormError('Passwords do not match.'); return }
+      setFormError('')
+      setStep(2)
+    } else if (!coordinates) {
+      setFormError('Use your current location or select your collection point on the map.')
+    } else {
+      setFormError('')
+      setStep(3)
+    }
+  }
+  const useCurrentLocation = () => {
+    setLocationError('')
+    if (!navigator.geolocation) { setLocationError('Location access is not available in this browser.'); return }
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => { setCoordinates({ latitude: coords.latitude, longitude: coords.longitude }); setLocationError('') },
+      () => setLocationError('Current location could not be read. Select your location on the map instead.'),
+      { enableHighAccuracy: true, timeout: 12000 }
+    )
+  }
+  return <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><form className="dialog registration-dialog customer-register-dialog" ref={(element) => { if (element) setFormElement(element) }} onSubmit={(event) => { event.preventDefault(); if (!finalSubmitAllowed.current) return; finalSubmitAllowed.current = false; void onSubmit(event) }}><button type="button" className="dialog-close" onClick={onClose} aria-label="Close"><X size={18} /></button><p className="registration-kicker">CUSTOMER REGISTRATION · STEP {step} OF 3</p><h2>{step === 1 ? 'Create your account' : step === 2 ? 'Set your collection location' : 'Confirm your location'}</h2><p className="registration-copy">{step === 1 ? 'Enter your personal and contact details.' : step === 2 ? 'Tell us where collections should take place, then pin the exact spot.' : 'Review the location details before creating your account.'}</p><div className="registration-steps customer-registration-steps">{['Personal details', 'Location', 'Confirmation'].map((label, index) => <div className={`registration-step ${step > index + 1 ? 'complete' : step === index + 1 ? 'active' : ''}`} key={label}><span>{step > index + 1 ? <Check size={14} /> : index + 1}</span><small>{label}</small></div>)}</div>
+    {step === 1 && <div className="registration-fields"><label>Full name<input name="fullName" autoComplete="name" defaultValue={details.fullName ?? ''} placeholder="e.g. Jean Romeo" required /></label><div className="registration-grid"><label>Phone number<input name="phone" type="tel" autoComplete="tel" defaultValue={details.phone ?? ''} placeholder="+250 7xx xxx xxx" required /></label><label>Email address<input name="email" type="email" autoComplete="email" defaultValue={details.email ?? ''} placeholder="you@example.com" required /></label></div><div className="registration-grid"><label>Password<input name="password" type="password" autoComplete="new-password" defaultValue={details.password ?? ''} minLength={8} placeholder="At least 8 characters" required /></label><label>Confirm password<input name="confirmPassword" type="password" autoComplete="new-password" defaultValue={details.confirmPassword ?? ''} minLength={8} placeholder="Repeat your password" required /></label></div></div>}
+    {step === 2 && <div className="registration-fields"><div className="registration-grid"><label>Province / City<input name="province" defaultValue={details.province ?? ''} placeholder="e.g. Kigali City" required /></label><label>District<input name="district" defaultValue={details.district ?? ''} placeholder="e.g. Gasabo" required /></label></div><div className="registration-grid"><label>Sector<input name="sector" defaultValue={details.sector ?? ''} placeholder="e.g. Kimihurura" required /></label><label>Address or street<input name="street" defaultValue={details.street ?? ''} placeholder="Street, house or landmark" required /></label></div><div className="customer-map-tools"><button type="button" className="dialog-cancel" onClick={useCurrentLocation}><Map size={15} /> Use my current location</button><span>{coordinates ? `${coordinates.latitude.toFixed(5)}, ${coordinates.longitude.toFixed(5)}` : 'Select the collection point on the map'}</span></div><Suspense fallback={<div className="customer-registration-map map-loading" role="status">Loading map...</div>}><CustomerLocationMap position={position} interactive selected={Boolean(coordinates)} onSelect={(latitude, longitude) => { setCoordinates({ latitude, longitude }); setFormError('') }} /></Suspense>{locationError && <p className="auth-error" role="alert">{locationError}</p>}</div>}
+    {step === 3 && <div className="customer-location-review"><strong>{details.fullName}</strong><span>{['street', 'sector', 'district', 'province'].map((field) => details[field]).join(', ')}</span><span>Coordinates: {coordinates?.latitude.toFixed(6)}, {coordinates?.longitude.toFixed(6)}</span><Suspense fallback={<div className="customer-registration-map review-map map-loading" role="status">Loading map...</div>}><CustomerLocationMap position={position} selected /></Suspense>{Object.entries(details).map(([name, value]) => <input key={name} type="hidden" name={name} value={value} />)}<input type="hidden" name="latitude" value={coordinates?.latitude ?? ''} /><input type="hidden" name="longitude" value={coordinates?.longitude ?? ''} /></div>}
+    {(formError || authError) && <p className="auth-error" role="alert">{formError || authError}</p>}<div className="dialog-actions customer-registration-actions">{step > 1 && <button type="button" className="dialog-cancel" onClick={() => { if (formElement) { const values = Object.fromEntries(new FormData(formElement).entries()); setDetails((current) => ({ ...current, ...Object.fromEntries(Object.entries(values).map(([key, value]) => [key, String(value)])) })) } setStep((current) => current - 1); setFormError('') }}><ChevronLeft size={15} /> Back</button>}{step < 3 ? <button type="button" className="hero-primary" onClick={validateStep}>Continue <ArrowRight size={15} /></button> : <button className="hero-primary" type="submit" onClick={() => { finalSubmitAllowed.current = true }} disabled={!coordinates}>Confirm location and create account <Check size={15} /></button>}</div></form></div>
 }
+
 
 function Dialog({ type, submitted, forgotPassword, authError, onGoogleSignIn, onCustomerRegister, onForgotPassword, onBackToSignIn, onClose, onSubmit }: { type: Exclude<Dialog, null>; submitted: boolean; forgotPassword: boolean; authError: string; onGoogleSignIn: (credential?: string) => void | Promise<void>; onCustomerRegister: () => void; onForgotPassword: () => void; onBackToSignIn: () => void; onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void | Promise<void> }) {
   useEffect(() => {
