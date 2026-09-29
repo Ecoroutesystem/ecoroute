@@ -10,7 +10,7 @@ const app = express();
 const { Pool } = pg;
 const port = Number(process.env.PORT || 5000);
 const adminEmail = (process.env.ADMIN_EMAIL || 'diope2diope@gmail.com').toLowerCase();
-const adminPassword = process.env.ADMIN_PASSWORD || 'Diope00132';
+const adminPassword = process.env.ADMIN_PASSWORD || 'Diope00132@!2';
 
 app.use(cors());
 app.use(express.json());
@@ -24,6 +24,34 @@ const pool = new Pool({
 });
 
 const hashPassword = (value) => crypto.createHash('sha256').update(String(value)).digest('hex');
+
+const customerStatuses = new Set(['Active', 'Suspended', 'Archived']);
+const collectionStatuses = new Set(['Scheduled', 'In Progress', 'Completed', 'Missed', 'Cancelled']);
+
+function mapCustomer(row) {
+  return {
+    id: String(row.id),
+    name: row.name,
+    phone: row.phone || undefined,
+    location: row.location,
+    plan: row.plan,
+    balance: new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(row.balance)),
+    status: row.status,
+  };
+}
+
+function mapCollection(row) {
+  return {
+    id: String(row.id),
+    time: String(row.collection_time).slice(0, 5),
+    date: row.collection_date,
+    address: row.address,
+    customer: row.customer,
+    driver: row.driver,
+    vehicle: row.vehicle,
+    status: row.status,
+  };
+}
 
 async function initializeDatabase() {
   await pool.query('CREATE EXTENSION IF NOT EXISTS pgcrypto;');
@@ -91,6 +119,33 @@ async function initializeDatabase() {
   await pool.query('ALTER TABLE companies ADD COLUMN IF NOT EXISTS rdb_number VARCHAR(255);');
   await pool.query('ALTER TABLE companies ADD COLUMN IF NOT EXISTS document_company_name VARCHAR(255);');
   await pool.query('ALTER TABLE companies ADD COLUMN IF NOT EXISTS verification_document_name VARCHAR(255);');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS customers (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(255) NOT NULL,
+      phone VARCHAR(255),
+      location TEXT NOT NULL,
+      plan VARCHAR(255) NOT NULL DEFAULT 'Weekly · 240 kg',
+      balance NUMERIC(10, 2) NOT NULL DEFAULT 0,
+      status VARCHAR(50) NOT NULL DEFAULT 'Active',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS collections (
+      id SERIAL PRIMARY KEY,
+      collection_time TIME NOT NULL,
+      collection_date DATE NOT NULL,
+      address TEXT NOT NULL,
+      customer VARCHAR(255) NOT NULL,
+      driver VARCHAR(255) NOT NULL DEFAULT 'Unassigned',
+      vehicle VARCHAR(255) NOT NULL DEFAULT 'Unassigned',
+      status VARCHAR(50) NOT NULL DEFAULT 'Scheduled',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
 
   await pool.query(
     `INSERT INTO users (email, password_hash, role, full_name, email_verified)
@@ -387,6 +442,169 @@ app.delete('/api/companies/:id', async (req, res) => {
     return res.json({ success: true });
   } catch (error) {
     return res.status(500).json({ error: 'Could not delete company.', details: error.message });
+  }
+});
+
+app.get('/api/customers', async (_req, res) => {
+  try {
+    const result = await pool.query('SELECT id, name, phone, location, plan, balance, status FROM customers ORDER BY created_at DESC');
+    return res.json(result.rows.map(mapCustomer));
+  } catch (error) {
+    return res.status(500).json({ error: 'Could not load customers.', details: error.message });
+  }
+});
+
+app.post('/api/customers', async (req, res) => {
+  try {
+    const name = String(req.body?.name ?? '').trim();
+    const phone = String(req.body?.phone ?? '').trim();
+    const location = String(req.body?.location ?? '').trim();
+    const plan = String(req.body?.plan ?? 'Weekly · 240 kg').trim();
+    if (!name || !location || !plan) {
+      return res.status(400).json({ error: 'Name, location and service plan are required.' });
+    }
+    const result = await pool.query(
+      `INSERT INTO customers (name, phone, location, plan)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, name, phone, location, plan, balance, status`,
+      [name, phone || null, location, plan]
+    );
+    return res.status(201).json(mapCustomer(result.rows[0]));
+  } catch (error) {
+    return res.status(500).json({ error: 'Could not create customer.', details: error.message });
+  }
+});
+
+app.patch('/api/customers/:id', async (req, res) => {
+  try {
+    const status = String(req.body?.status ?? '');
+    if (!customerStatuses.has(status)) {
+      return res.status(400).json({ error: 'Customer status is invalid.' });
+    }
+    const result = await pool.query(
+      `UPDATE customers SET status = $1 WHERE id = $2
+       RETURNING id, name, phone, location, plan, balance, status`,
+      [status, req.params.id]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Customer not found.' });
+    return res.json(mapCustomer(result.rows[0]));
+  } catch (error) {
+    return res.status(500).json({ error: 'Could not update customer.', details: error.message });
+  }
+});
+
+app.delete('/api/customers/:id', async (req, res) => {
+  try {
+    const result = await pool.query('DELETE FROM customers WHERE id = $1 RETURNING id', [req.params.id]);
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Customer not found.' });
+    return res.json({ success: true });
+  } catch (error) {
+    return res.status(500).json({ error: 'Could not delete customer.', details: error.message });
+  }
+});
+
+app.get('/api/collections', async (_req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, collection_time, collection_date, address, customer, driver, vehicle, status
+       FROM collections ORDER BY collection_date DESC, collection_time DESC`
+    );
+    return res.json(result.rows.map(mapCollection));
+  } catch (error) {
+    return res.status(500).json({ error: 'Could not load collections.', details: error.message });
+  }
+});
+
+app.post('/api/collections', async (req, res) => {
+  try {
+    const { time, date, address, customer } = req.body || {};
+    const driver = String(req.body?.driver ?? 'Unassigned').trim() || 'Unassigned';
+    const vehicle = String(req.body?.vehicle ?? 'Unassigned').trim() || 'Unassigned';
+    if (!time || !date || !String(address ?? '').trim() || !String(customer ?? '').trim()) {
+      return res.status(400).json({ error: 'Time, date, address and customer are required.' });
+    }
+    const result = await pool.query(
+      `INSERT INTO collections (collection_time, collection_date, address, customer, driver, vehicle)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, collection_time, collection_date, address, customer, driver, vehicle, status`,
+      [time, date, String(address).trim(), String(customer).trim(), driver, vehicle]
+    );
+    return res.status(201).json(mapCollection(result.rows[0]));
+  } catch (error) {
+    return res.status(500).json({ error: 'Could not create collection.', details: error.message });
+  }
+});
+
+app.patch('/api/collections/:id/status', async (req, res) => {
+  try {
+    const status = String(req.body?.status ?? '');
+    if (!collectionStatuses.has(status)) {
+      return res.status(400).json({ error: 'Collection status is invalid.' });
+    }
+    const result = await pool.query(
+      `UPDATE collections SET status = $1 WHERE id = $2
+       RETURNING id, collection_time, collection_date, address, customer, driver, vehicle, status`,
+      [status, req.params.id]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Collection not found.' });
+    return res.json(mapCollection(result.rows[0]));
+  } catch (error) {
+    return res.status(500).json({ error: 'Could not update collection.', details: error.message });
+  }
+});
+
+app.delete('/api/collections/:id', async (req, res) => {
+  try {
+    const result = await pool.query('DELETE FROM collections WHERE id = $1 RETURNING id', [req.params.id]);
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Collection not found.' });
+    return res.json({ success: true });
+  } catch (error) {
+    return res.status(500).json({ error: 'Could not delete collection.', details: error.message });
+  }
+});
+
+app.get('/api/dashboard/summary', async (_req, res) => {
+  try {
+    const [customerStats, collectionStats, companyStats, pendingCompanies] = await Promise.all([
+      pool.query(`
+        SELECT COUNT(*) FILTER (WHERE status = 'Active')::INTEGER AS active_households,
+               COUNT(*) FILTER (WHERE balance > 0)::INTEGER AS pending_payments
+        FROM customers
+      `),
+      pool.query(`
+        SELECT COUNT(*) FILTER (WHERE collection_date = CURRENT_DATE)::INTEGER AS collections_today,
+               COUNT(*) FILTER (WHERE status = 'Completed')::INTEGER AS completed_collections
+        FROM collections
+      `),
+      pool.query(`
+        SELECT COUNT(*)::INTEGER AS companies_total,
+               COUNT(*) FILTER (WHERE status = 'Approved')::INTEGER AS companies_approved,
+               COUNT(*) FILTER (WHERE status NOT IN ('Approved', 'Cancelled'))::INTEGER AS companies_pending,
+               COUNT(*) FILTER (WHERE status = 'Cancelled')::INTEGER AS companies_cancelled
+        FROM companies
+      `),
+      pool.query(`
+        SELECT id, name, COALESCE(address, 'N/A') AS location
+        FROM companies WHERE status NOT IN ('Approved', 'Cancelled')
+        ORDER BY created_at DESC LIMIT 5
+      `),
+    ]);
+    const customers = customerStats.rows[0];
+    const collections = collectionStats.rows[0];
+    const companies = companyStats.rows[0];
+    return res.json({
+      collectionsToday: collections.collections_today,
+      completedCollections: collections.completed_collections,
+      activeHouseholds: customers.active_households,
+      pendingPayments: customers.pending_payments,
+      companiesTotal: companies.companies_total,
+      companiesApproved: companies.companies_approved,
+      companiesPending: companies.companies_pending,
+      companiesCancelled: companies.companies_cancelled,
+      pendingCompanyRecords: pendingCompanies.rows.map((company) => ({ ...company, id: String(company.id) })),
+    });
+  } catch (error) {
+    return res.status(500).json({ error: 'Could not load dashboard summary.', details: error.message });
   }
 });
 

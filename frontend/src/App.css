@@ -17,6 +17,46 @@
 @media (max-width: 560px) { .site-header, .hero-section, .problem-section, .feature-section, .workflow-section, .final-cta { width: calc(100% - 36px); }.site-header { padding: 0 12px; }.site-nav { width: calc(100% + 2px); top: 59px; }.site-nav > a, .signin-link { font-size: 11px; }.nav-actions .header-cta { font-size: 11px; }.hero-copy h1 { font-size: 40px; letter-spacing: -1.8px; }.hero-lede { font-size: 12px; }.hero-actions { align-items: stretch; flex-direction: column; }.hero-primary { width: fit-content; }.hero-proof { margin-top: 35px; }.preview-window { transform: none; }.preview-body aside { display: none; }.preview-main { padding: 14px; }.preview-lower { grid-template-columns: 1fr; }.ai-mini { display: none; }.preview-heading h3 { font-size: 12px; }.preview-heading button { font-size: 6px; }.platform-strip { grid-template-columns: 1fr 1fr; }.platform-strip > div { min-height: 90px; padding: 14px 16px; }.platform-strip > div:nth-child(2) { border-right: 0; }.platform-strip > div:nth-child(-n+2) { border-bottom: 1px solid #dfe9df; }.platform-strip strong { font-size: 9px; }.problem-list { grid-template-columns: 1fr; }.feature-grid { grid-template-columns: 1fr; }.feature-card { min-height: 0; }.feature-card p { min-height: 0; }.workflow-visual { padding: 14px; }.route-map { height: 170px; }.pin-four { left: 170px; }.audience-block { padding: 60px 18px; }.audience-block h2, .final-cta h2 { font-size: 31px; }.customer-notice { max-width: none; }.final-actions { width: 100%; flex-direction: column; align-items: stretch; }.outline-light { justify-content: center; }.site-footer { grid-template-columns: 1fr; }.site-footer > div { flex-wrap: wrap; }.dialog { padding: 25px 20px; } }
 @media (max-width: 920px) { .landing-page > main { padding-top: 72px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }
+
+.site-footer {
+	grid-template-columns: minmax(220px, 1.5fr) repeat(3, minmax(130px, 1fr));
+	align-items: start;
+	column-gap: clamp(28px, 4vw, 64px);
+	row-gap: 42px;
+	padding: 52px max(calc((100% - 1240px) / 2), 32px) 22px;
+}
+.site-footer > .footer-column {
+	min-width: 0;
+	display: grid;
+	align-content: start;
+	justify-items: start;
+	gap: 11px;
+}
+.footer-brand p { max-width: 250px; color: #71857a; font-size: 12px; line-height: 1.7; }
+.footer-column h3 { margin-bottom: 3px; color: #345844; font-size: 12px; }
+.footer-column > a { max-width: 100%; color: #637c6e; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; transition: color .18s ease; }
+.footer-column > a:hover { color: #2f765a; }
+.footer-column > a:focus-visible { outline: 2px solid #4c9365; outline-offset: 4px; }
+.site-footer > .footer-bottom {
+	grid-column: 1 / -1;
+	display: flex;
+	justify-content: space-between;
+	gap: 16px;
+	padding-top: 18px;
+	border-top: 1px solid #d5e2d6;
+	color: #778b7e;
+	font-size: 10px;
+	line-height: 1.5;
+}
+
+@media (max-width: 920px) {
+	.site-footer { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 40px; row-gap: 34px; padding: 42px 32px 20px; }
+	.site-footer > .footer-contact { grid-column: auto; }
+}
+@media (max-width: 560px) {
+	.site-footer { grid-template-columns: minmax(0, 1fr); gap: 28px; padding: 36px 22px 18px; }
+	.site-footer > .footer-bottom { align-items: flex-start; flex-direction: column; gap: 7px; }
+}
 .registration-dialog { width: min(100%, 700px); max-height: calc(100vh - 32px); padding: 31px 32px; border: 1px solid #dfe9df; border-radius: 16px; color: #173b31; background: #fff; box-shadow: 0 25px 80px rgba(13,42,35,.2); }
 .registration-dialog h2 { color: #173b31; font-size: 29px; letter-spacing: -.8px; }
 .registration-kicker { margin: 0 0 7px; color: #2f765a; font-size: 11px; font-weight: 700; letter-spacing: .08em; }
@@ -111,3 +151,58 @@
 .footer-bottom { grid-column: 1 / -1; display: flex; justify-content: space-between; padding-top: 21px; border-top: 1px solid #dbe7da; color: #8a9b91; font-size: 9px; }
 @media (max-width: 920px) { .site-footer { grid-template-columns: 1.2fr 1fr 1fr; }.footer-contact { grid-column: 2 / -1; }.footer-bottom { grid-column: 1 / -1; } }
 @media (max-width: 560px) { .site-footer { grid-template-columns: 1fr 1fr; row-gap: 30px; }.footer-brand { grid-column: 1 / -1; }.footer-contact { grid-column: 1 / -1; }.footer-bottom { align-items: flex-start; flex-direction: column; gap: 7px; } }
+
+@media (max-width: 920px) {
+	.site-footer { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	.site-footer > .footer-contact { grid-column: auto; }
+}
+@media (max-width: 560px) {
+	.site-footer { grid-template-columns: minmax(0, 1fr); }
+}
+
+.dialog:not(.registration-dialog) .dialog-actions { justify-content: flex-start; }
+.google-signin {
+	height: auto;
+	margin: 8px 0 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+}
+.google-signin > button {
+	width: 100%;
+	height: 48px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 11px;
+	padding: 0 16px;
+	border: 1px solid #d7e3d9;
+	border-radius: 7px;
+	color: #2b4034;
+	background: #fff;
+	font: 600 12px 'DM Sans', sans-serif;
+	transition: border-color .18s ease, background .18s ease, box-shadow .18s ease;
+}
+.google-signin > button:hover { border-color: #91b79a; background: #f8fbf8; box-shadow: 0 3px 10px rgba(39, 92, 62, .08); }
+.google-signin > button:focus-visible { outline: 3px solid rgba(61, 139, 97, .24); outline-offset: 2px; }
+.google-signin > button > span {
+	width: 20px;
+	height: 20px;
+	display: grid;
+	place-items: center;
+	border-radius: 0;
+	color: #4285f4;
+	font: 700 17px Arial, sans-serif;
+}
+.google-signin:has(iframe) > button { display: none; }
+.google-signin iframe { max-width: 100%; }
+.dialog:has(.google-signin) { max-height: none; overflow-y: visible; }
+@media (max-height: 700px) {
+	.dialog:has(.google-signin) { padding-top: 24px; padding-bottom: 24px; }
+	.dialog:has(.google-signin) .signin-fields { gap: 8px; }
+	.dialog:has(.google-signin) .signin-fields label { margin-bottom: 8px; }
+	.dialog:has(.google-signin) .signin-divider { margin: 12px 0 9px; }
+	.dialog:has(.google-signin) .signin-terms { margin-top: 12px !important; }
+	.dialog:has(.google-signin) .dialog-actions { margin-top: 14px; }
+	.dialog:has(.google-signin) .forgot-link { margin-top: 12px; }
+}
