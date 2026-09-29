@@ -152,7 +152,7 @@
 .terms-check a { color: #3d815b; font-weight: 700; }
 .signin-terms { margin-top: 18px !important; }
 .dialog:not(.registration-dialog) .dialog-actions { margin-top: 17px; }
-.dialog:not(.registration-dialog) .dialog-actions { justify-content: flex-end; }
+.dialog:not(.registration-dialog):not(.customer-register-dialog) .dialog-actions { justify-content: flex-start; }
 .dialog:not(.registration-dialog) .dialog-actions .dialog-cancel { order: 2; }
 .dialog:not(.registration-dialog) .dialog-actions .hero-primary { order: 1; }
 .upload-field input[type="file"] { height: auto; padding: 13px; border-style: dashed; cursor: pointer; }

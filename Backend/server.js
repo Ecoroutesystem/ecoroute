@@ -134,6 +134,16 @@ async function initializeDatabase() {
   await pool.query('ALTER TABLE companies ADD COLUMN IF NOT EXISTS document_company_name VARCHAR(255);');
   await pool.query('ALTER TABLE companies ADD COLUMN IF NOT EXISTS verification_document_name VARCHAR(255);');
   await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS company_id UUID REFERENCES companies(id);');
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS payments (
+      id SERIAL PRIMARY KEY,
+      customer_id INTEGER NOT NULL REFERENCES customers(id),
+      amount NUMERIC NOT NULL CHECK (amount > 0),
+      method VARCHAR(100) NOT NULL,
+      reference VARCHAR(255) UNIQUE NOT NULL,
+      paid_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
 
   await pool.query(
     `INSERT INTO users (email, password_hash, role, full_name, email_verified)
@@ -190,13 +200,13 @@ app.get('/api/dashboard/summary', async (_req, res) => {
       `),
       pool.query(`
         SELECT COUNT(*) FILTER (WHERE COALESCE(status, 'Active') = 'Active')::int AS active,
-          COUNT(*) FILTER (WHERE COALESCE(balance_amount, 0) > 0)::int AS accounts_with_balance,
-          COALESCE(SUM(balance_amount), 0)::numeric AS outstanding_balance
+          COUNT(*) FILTER (WHERE COALESCE(balance, 0) > 0)::int AS accounts_with_balance,
+          COALESCE(SUM(balance), 0)::numeric AS outstanding_balance
         FROM customers
       `),
       pool.query(`
-        SELECT COUNT(*) FILTER (WHERE COALESCE(date, created_at::date) = CURRENT_DATE)::int AS today,
-          COUNT(*) FILTER (WHERE COALESCE(date, created_at::date) >= CURRENT_DATE - INTERVAL '6 days'
+        SELECT COUNT(*) FILTER (WHERE COALESCE(collection_date, created_at::date) = CURRENT_DATE)::int AS today,
+          COUNT(*) FILTER (WHERE COALESCE(collection_date, created_at::date) >= CURRENT_DATE - INTERVAL '6 days'
             AND status = 'Completed')::int AS completed_this_week
         FROM collections
       `),
@@ -208,15 +218,15 @@ app.get('/api/dashboard/summary', async (_req, res) => {
           COUNT(collections.id)::int AS total,
           COUNT(collections.id) FILTER (WHERE collections.status = 'Completed')::int AS completed
         FROM days
-        LEFT JOIN collections ON COALESCE(collections.date, collections.created_at::date) = days.day
+        LEFT JOIN collections ON COALESCE(collections.collection_date, collections.created_at::date) = days.day
         GROUP BY days.day
         ORDER BY days.day
       `),
       pool.query(`
-        SELECT id, customer, address, driver, time, status,
-          TO_CHAR(COALESCE(date, created_at::date), 'YYYY-MM-DD') AS date
+        SELECT id, customer, address, driver, collection_time AS time, status,
+          TO_CHAR(COALESCE(collection_date, created_at::date), 'YYYY-MM-DD') AS date
         FROM collections
-        ORDER BY COALESCE(date, created_at::date) DESC, time DESC NULLS LAST, created_at DESC
+        ORDER BY COALESCE(collection_date, created_at::date) DESC, collection_time DESC NULLS LAST, created_at DESC
         LIMIT 6
       `),
       pool.query(`
@@ -352,17 +362,17 @@ app.post('/api/admin/assistant', requireAdmin, async (req, res) => {
         COUNT(*) FILTER (WHERE status = 'Cancelled')::int AS cancelled FROM companies`),
       pool.query(`SELECT COUNT(*)::int AS total,
         COUNT(*) FILTER (WHERE COALESCE(status, 'Active') = 'Active')::int AS active,
-        COUNT(*) FILTER (WHERE COALESCE(balance_amount, 0) > 0)::int AS with_balance,
-        COALESCE(SUM(balance_amount), 0)::numeric AS outstanding FROM customers`),
+        COUNT(*) FILTER (WHERE COALESCE(balance, 0) > 0)::int AS with_balance,
+        COALESCE(SUM(balance), 0)::numeric AS outstanding FROM customers`),
       pool.query(`SELECT COUNT(*)::int AS total,
-        COUNT(*) FILTER (WHERE COALESCE(date, created_at::date) = CURRENT_DATE)::int AS today,
+        COUNT(*) FILTER (WHERE COALESCE(collection_date, created_at::date) = CURRENT_DATE)::int AS today,
         COUNT(*) FILTER (WHERE status = 'Completed')::int AS completed,
         COUNT(*) FILTER (WHERE status = 'Missed')::int AS missed FROM collections`),
       pool.query(`SELECT COUNT(*)::int AS count, COALESCE(SUM(amount), 0)::numeric AS total
         FROM payments WHERE paid_at >= DATE_TRUNC('month', CURRENT_DATE)`),
-      pool.query(`SELECT TO_CHAR(date, 'YYYY-MM-DD') AS date, COUNT(*)::int AS count
-        FROM collections WHERE date >= CURRENT_DATE AND date < CURRENT_DATE + INTERVAL '8 days'
-        GROUP BY date ORDER BY date`),
+      pool.query(`SELECT TO_CHAR(collection_date, 'YYYY-MM-DD') AS date, COUNT(*)::int AS count
+        FROM collections WHERE collection_date >= CURRENT_DATE AND collection_date < CURRENT_DATE + INTERVAL '8 days'
+        GROUP BY collection_date ORDER BY collection_date`),
       pool.query(`SELECT method, COUNT(*)::int AS count, COALESCE(SUM(amount), 0)::numeric AS total
         FROM payments WHERE paid_at >= DATE_TRUNC('month', CURRENT_DATE)
         GROUP BY method ORDER BY total DESC`),
@@ -426,7 +436,7 @@ app.post('/api/customer/assistant', async (req, res) => {
     }
 
     const customerResult = await pool.query(`
-      SELECT id, name, location, plan, balance, balance_amount, status
+      SELECT id, name, location, plan, balance, status
       FROM customers WHERE id = $1
     `, [customerId]);
     if (customerResult.rowCount === 0) return res.status(404).json({ error: 'Household profile could not be found.' });
@@ -449,7 +459,7 @@ app.post('/api/customer/assistant', async (req, res) => {
         location: customer.location,
         servicePlan: customer.plan,
         balance: customer.balance,
-        balanceAmountRwf: customer.balance_amount,
+        balanceAmountRwf: customer.balance,
         status: customer.status,
       },
       recentCollections: collections.rows,
@@ -566,7 +576,7 @@ app.post('/api/auth/register', async (req, res) => {
       `INSERT INTO customers (
         user_id, company_id, name, phone, location, province, district, sector, street, latitude, longitude,
         plan, balance, status
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'Weekly · 240 kg', 'RWF 0', 'Active')
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'Weekly · 240 kg', 0, 'Active')
        RETURNING id`,
       [userId, company?.id ?? null, fullName, phone,
         [street, sector, district, province].join(', '), province, district, sector, street, latitude, longitude]
