@@ -6,6 +6,13 @@ type CustomerStatus = 'Active' | 'Suspended' | 'Archived'
 type Customer = { id: string; name: string; phone?: string; location: string; plan: string; balance: string; status: CustomerStatus }
 const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5001'
 
+async function fetchCustomers(): Promise<Customer[]> {
+  const response = await fetch(`${apiBase}/api/customers`)
+  const result = await response.json() as Customer[] | { error?: string }
+  if (!response.ok) throw new Error('error' in result ? result.error : 'Customers could not be loaded')
+  return result as Customer[]
+}
+
 export default function CompanyCustomersView() {
   const [customers, setCustomers] = useState<Customer[]>([])
   const [loading, setLoading] = useState(true)
@@ -17,10 +24,7 @@ export default function CompanyCustomersView() {
     setLoading(true)
     setError('')
     try {
-      const response = await fetch(`${apiBase}/api/customers`)
-      const result = await response.json() as Customer[] | { error?: string }
-      if (!response.ok) throw new Error('error' in result ? result.error : 'Customers could not be loaded')
-      setCustomers(result as Customer[])
+      setCustomers(await fetchCustomers())
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Customers could not be loaded')
     } finally {
@@ -28,7 +32,16 @@ export default function CompanyCustomersView() {
     }
   }
 
-  useEffect(() => { void loadCustomers() }, [])
+  useEffect(() => {
+    let cancelled = false
+    fetchCustomers()
+      .then((result) => { if (!cancelled) setCustomers(result) })
+      .catch((requestError: unknown) => {
+        if (!cancelled) setError(requestError instanceof Error ? requestError.message : 'Customers could not be loaded')
+      })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [])
 
   const updateStatus = async (customer: Customer, status: CustomerStatus) => {
     setError('')

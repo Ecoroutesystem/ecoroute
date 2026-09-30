@@ -14,13 +14,17 @@ const adminEmail = (import.meta.env.VITE_ADMIN_EMAIL as string | undefined)?.toL
 const CustomerLocationMap = lazy(() => import('./CustomerLocationMap'))
 const titleCase = (value: string) => value.toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase())
 const rwandaProvinces = Object.keys(rwandaLocations).map(titleCase)
-const getRwandaDistricts = (province: string) =>
-  Object.keys(rwandaLocations[province.toLowerCase()] ?? {}).map(titleCase)
+const findLocationKey = (choices: string[], selected: string) =>
+  choices.find((choice) => choice.trim().toLowerCase() === selected.trim().toLowerCase())
+const getRwandaDistricts = (province: string) => {
+  const provinceKey = findLocationKey(Object.keys(rwandaLocations), province)
+  return Object.keys(rwandaLocations[provinceKey ?? ''] ?? {}).map(titleCase)
+}
 const getRwandaSectors = (province: string, district: string): string[] => {
-  const districts = rwandaLocations[province.toLowerCase()] ?? {}
-  const sectors = Object.entries(districts).find(
-    ([name]) => name.toLowerCase() === district.toLowerCase(),
-  )?.[1]
+  const provinceKey = findLocationKey(Object.keys(rwandaLocations), province)
+  const districts = rwandaLocations[provinceKey ?? ''] ?? {}
+  const districtKey = findLocationKey(Object.keys(districts), district)
+  const sectors = districts[districtKey ?? '']
   return sectors?.map(titleCase) ?? []
 }
 

@@ -667,6 +667,71 @@ app.get('/api/customers', async (req, res) => {
   }
 });
 
+app.post('/api/customers', async (req, res) => {
+  try {
+    const name = String(req.body?.name ?? '').trim();
+    const phone = String(req.body?.phone ?? '').trim();
+    const location = String(req.body?.location ?? '').trim();
+    const plan = String(req.body?.plan ?? '').trim();
+    if (!name || !location || !plan) {
+      return res.status(400).json({ error: 'Customer name, location and service plan are required.' });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO customers (name, phone, location, plan, balance, status)
+       VALUES ($1, $2, $3, $4, 0, 'Active')
+       RETURNING id::text AS id, name, phone, location, plan,
+         'RWF ' || TO_CHAR(COALESCE(balance, 0), 'FM999G999G999G990') AS balance, status`,
+      [name, phone || null, location, plan]
+    );
+    return res.status(201).json(result.rows[0]);
+  } catch (error) {
+    return res.status(500).json({ error: 'Customer could not be created.', details: error.message });
+  }
+});
+
+app.patch('/api/customers/:id', async (req, res) => {
+  try {
+    const customerId = String(req.params.id ?? '').trim();
+    const status = String(req.body?.status ?? '').trim();
+    if (!/^\d+$/.test(customerId)) {
+      return res.status(400).json({ error: 'Customer ID must be a positive integer.' });
+    }
+    if (!['Active', 'Suspended', 'Archived'].includes(status)) {
+      return res.status(400).json({ error: 'Customer status is not valid.' });
+    }
+
+    const result = await pool.query(
+      `UPDATE customers SET status = $1 WHERE id = $2
+       RETURNING id::text AS id, name, phone, location, plan,
+         'RWF ' || TO_CHAR(COALESCE(balance, 0), 'FM999G999G999G990') AS balance, status`,
+      [status, Number(customerId)]
+    );
+    if (!result.rowCount) return res.status(404).json({ error: 'Customer was not found.' });
+    return res.json(result.rows[0]);
+  } catch (error) {
+    return res.status(500).json({ error: 'Customer status could not be updated.', details: error.message });
+  }
+});
+
+app.delete('/api/customers/:id', async (req, res) => {
+  try {
+    const customerId = String(req.params.id ?? '').trim();
+    if (!/^\d+$/.test(customerId)) {
+      return res.status(400).json({ error: 'Customer ID must be a positive integer.' });
+    }
+
+    const result = await pool.query('DELETE FROM customers WHERE id = $1 RETURNING id', [Number(customerId)]);
+    if (!result.rowCount) return res.status(404).json({ error: 'Customer was not found.' });
+    return res.json({ message: 'Customer deleted successfully.' });
+  } catch (error) {
+    if (error.code === '23503') {
+      return res.status(409).json({ error: 'Customer has linked records and cannot be deleted. Suspend the customer instead.' });
+    }
+    return res.status(500).json({ error: 'Customer could not be deleted.', details: error.message });
+  }
+});
+
 app.get('/api/collections', async (_req, res) => {
   try {
     const result = await pool.query(`
