@@ -732,6 +732,74 @@ app.delete('/api/customers/:id', async (req, res) => {
   }
 });
 
+app.get('/api/payments', async (req, res) => {
+  try {
+    const customerId = String(req.query.customerId ?? '').trim();
+    if (customerId && !/^\d+$/.test(customerId)) {
+      return res.status(400).json({ error: 'Customer ID must be a positive integer.' });
+    }
+
+    const result = await pool.query(
+      `SELECT p.id::text AS id, p.customer_id::text AS "customerId", c.name AS customer,
+        p.amount::double precision AS amount, p.method, p.reference,
+        p.paid_at AS "paidAt"
+       FROM payments p
+       JOIN customers c ON c.id = p.customer_id
+       ${customerId ? 'WHERE p.customer_id = $1' : ''}
+       ORDER BY p.paid_at DESC, p.id DESC`,
+      customerId ? [Number(customerId)] : []
+    );
+    return res.json(result.rows);
+  } catch (error) {
+    return res.status(500).json({ error: 'Could not load payments.', details: error.message });
+  }
+});
+
+app.post('/api/payments', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const customerId = String(req.body?.customerId ?? '').trim();
+    const amount = Number(req.body?.amount);
+    const method = String(req.body?.method ?? '').trim();
+    if (!/^\d+$/.test(customerId) || !Number.isSafeInteger(amount) || amount <= 0 || !method) {
+      return res.status(400).json({ error: 'A valid customer, positive whole-number amount and payment method are required.' });
+    }
+
+    await client.query('BEGIN');
+    const customerResult = await client.query(
+      'SELECT id, balance FROM customers WHERE id = $1 FOR UPDATE',
+      [Number(customerId)]
+    );
+    if (!customerResult.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Customer was not found.' });
+    }
+    const balance = Number(customerResult.rows[0].balance ?? 0);
+    if (amount > balance) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Payment cannot be greater than the outstanding balance.' });
+    }
+
+    const reference = `ER-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+    const paymentResult = await client.query(
+      `INSERT INTO payments (customer_id, amount, method, reference)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id::text AS id, customer_id::text AS "customerId",
+         amount::double precision AS amount, method, reference, paid_at AS "paidAt"`,
+      [Number(customerId), amount, method, reference]
+    );
+    await client.query('UPDATE customers SET balance = COALESCE(balance, 0) - $1 WHERE id = $2', [amount, Number(customerId)]);
+    const customer = await client.query('SELECT name AS customer FROM customers WHERE id = $1', [Number(customerId)]);
+    await client.query('COMMIT');
+    return res.status(201).json({ ...paymentResult.rows[0], customer: customer.rows[0].customer });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    return res.status(500).json({ error: 'Payment could not be recorded.', details: error.message });
+  } finally {
+    client.release();
+  }
+});
+
 app.get('/api/collections', async (_req, res) => {
   try {
     const result = await pool.query(`

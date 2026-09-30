@@ -73,8 +73,15 @@ function App() {
       const email = String(form.get('email') ?? '').trim().toLowerCase()
       if (forgotPassword) { setAuthError('Password reset is handled by the backend administrator.'); setSubmitted(true); return }
       const password = String(form.get('password') ?? '')
-      const response = await fetch(`${apiBase}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) })
-      const result = await response.json() as { error?: string; user?: { role?: string; customerId?: string }; adminToken?: string }
+      let response: Response
+      let result: { error?: string; user?: { role?: string; customerId?: string }; adminToken?: string }
+      try {
+        response = await fetch(`${apiBase}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) })
+        result = await response.json() as typeof result
+      } catch {
+        setAuthError(`Could not reach the EcoRoute API at ${apiBase}. Check that the backend is running and restart the frontend after changing its API URL.`)
+        return
+      }
       if (!response.ok) { setAuthError(result.error ?? 'Unable to sign in. Check your email and password.'); return }
       const role = String(result.user?.role ?? '').toLowerCase()
       setAuthError('')
