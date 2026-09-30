@@ -85,6 +85,12 @@ async function initializeDatabase() {
   await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token TEXT;');
   await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_expires_at TIMESTAMPTZ;');
   await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id);');
+  await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS province VARCHAR(255);');
+  await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS district VARCHAR(255);');
+  await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS sector VARCHAR(255);');
+  await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS street TEXT;');
+  await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION;');
+  await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS admins (
@@ -637,6 +643,48 @@ app.post('/api/auth/google', async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ error: 'Google sign-in failed.', details: error.message });
+  }
+});
+
+app.get('/api/customers', async (req, res) => {
+  try {
+    const customerId = String(req.query.customerId ?? '').trim();
+    if (customerId && !/^\d+$/.test(customerId)) {
+      return res.status(400).json({ error: 'Customer ID must be a positive integer.' });
+    }
+
+    const result = await pool.query(
+      `SELECT id::text AS id, name, phone, location, latitude, longitude, plan,
+        'RWF ' || TO_CHAR(COALESCE(balance, 0), 'FM999G999G999G990') AS balance, status
+       FROM customers
+       ${customerId ? 'WHERE id = $1' : ''}
+       ORDER BY name ASC`,
+      customerId ? [Number(customerId)] : []
+    );
+    return res.json(result.rows);
+  } catch (error) {
+    return res.status(500).json({ error: 'Could not load customers.', details: error.message });
+  }
+});
+
+app.get('/api/collections', async (_req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT id::text AS id,
+        COALESCE(TO_CHAR(collection_time, 'HH24:MI'), '') AS time,
+        TO_CHAR(COALESCE(collection_date, created_at::date), 'YYYY-MM-DD') AS date,
+        COALESCE(address, '') AS address,
+        COALESCE(customer, '') AS customer,
+        COALESCE(driver, 'Unassigned') AS driver,
+        COALESCE(vehicle, 'Unassigned') AS vehicle,
+        COALESCE(status, 'Scheduled') AS status
+      FROM collections
+      ORDER BY COALESCE(collection_date, created_at::date) DESC,
+        collection_time DESC NULLS LAST, id DESC
+    `);
+    return res.json(result.rows);
+  } catch (error) {
+    return res.status(500).json({ error: 'Could not load collections.', details: error.message });
   }
 });
 

@@ -6,6 +6,5 @@
     "dev:frontend": "npm run dev --prefix frontend",
     "dev:backend": "node --watch --env-file=Backend/.env Backend/server.js",
     "build": "npm run build --prefix frontend"
-  },
-  "dependencies": {}
+  }
 }

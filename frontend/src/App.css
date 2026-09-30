@@ -73,8 +73,10 @@
 .registration-dialog input, .registration-dialog textarea { width: 100%; border: 1px solid #dfe9df; border-radius: 10px; color: #173b31; background: #fbfdf9; font: 14px 'DM Sans', sans-serif; }
 .registration-dialog input { height: 37px; padding: 0 12px; }
 .registration-dialog textarea { min-height: 72px; padding: 11px 12px; resize: vertical; }
+.registration-dialog select { width: 100%; height: 42px; padding: 0 36px 0 12px; border: 1px solid #dfe9df; border-radius: 10px; outline: none; color: #173b31; background-color: #fbfdf9; background-image: linear-gradient(45deg, transparent 50%, #71877a 50%), linear-gradient(135deg, #71877a 50%, transparent 50%); background-repeat: no-repeat; background-position: calc(100% - 17px) 50%, calc(100% - 12px) 50%; background-size: 5px 5px; font: 14px 'DM Sans', sans-serif; appearance: none; cursor: pointer; transition: border-color .2s, box-shadow .2s, background-color .2s; }
 .registration-dialog input::placeholder, .registration-dialog textarea::placeholder { color: #90a29a; }
-.registration-dialog input:focus, .registration-dialog textarea:focus { border-color: #26c875; outline: none; box-shadow: 0 0 0 3px rgba(38,200,117,.13); }
+.registration-dialog input:focus, .registration-dialog textarea:focus, .registration-dialog select:focus { border-color: #26c875; outline: none; box-shadow: 0 0 0 3px rgba(38,200,117,.13); }
+.registration-dialog select:disabled { color: #8a9a90; background-color: #f1f5f1; cursor: not-allowed; }
 .registration-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 17px; }
 .field-caption { margin: 2px 0 -4px; color: #71807a; font-size: 11px; font-weight: 700; letter-spacing: .08em; }
 .password-guide { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 25px; padding: 16px; border: 1px solid #dfe9df; border-radius: 11px; color: #71807a; font-size: 12px; }

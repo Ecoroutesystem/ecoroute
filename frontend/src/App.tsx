@@ -4,6 +4,7 @@ import { motion } from 'framer-motion'
 import CustomerPortal from './CustomerPortal'
 import AdminPortal from './AdminPortal'
 import CompanyPortal from './CompanyPortal'
+import { rwandaLocations } from './rwanda-locations.ts'
 import './App.css'
 
 type Dialog = 'register' | 'signin' | null
@@ -11,6 +12,17 @@ type GoogleIdentity = { accounts: { id: { initialize: (options: { client_id: str
 declare global { interface Window { google?: GoogleIdentity } }
 const adminEmail = (import.meta.env.VITE_ADMIN_EMAIL as string | undefined)?.toLowerCase() ?? 'diope2diope@gmail.com'
 const CustomerLocationMap = lazy(() => import('./CustomerLocationMap'))
+const titleCase = (value: string) => value.toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase())
+const rwandaProvinces = Object.keys(rwandaLocations).map(titleCase)
+const getRwandaDistricts = (province: string) =>
+  Object.keys(rwandaLocations[province.toLowerCase()] ?? {}).map(titleCase)
+const getRwandaSectors = (province: string, district: string): string[] => {
+  const districts = rwandaLocations[province.toLowerCase()] ?? {}
+  const sectors = Object.entries(districts).find(
+    ([name]) => name.toLowerCase() === district.toLowerCase(),
+  )?.[1]
+  return sectors?.map(titleCase) ?? []
+}
 
 const features = [
   { icon: CalendarDays, title: 'Scheduling that stays clear', text: 'Build recurring or one-off collections around dates, locations, teams and vehicles.' },
@@ -72,7 +84,7 @@ function App() {
     const confirmPassword = String(form.get('confirmPassword') ?? '')
     if (password !== confirmPassword) { setAuthError('Passwords do not match.'); return }
     if (password.length < 8) { setAuthError('Password must contain at least 8 characters.'); return }
-    const registration = { companyName: String(form.get('companyName') ?? ''), email: String(form.get('email') ?? ''), phone: String(form.get('phone') ?? ''), address: String(form.get('address') ?? ''), tin: String(form.get('tin') ?? ''), password, confirmPassword }
+    const registration = { companyName: String(form.get('companyName') ?? ''), email: String(form.get('email') ?? ''), phone: String(form.get('phone') ?? ''), officePhone: String(form.get('officePhone') ?? ''), address: String(form.get('address') ?? ''), province: String(form.get('province') ?? ''), district: String(form.get('district') ?? ''), sector: String(form.get('sector') ?? ''), cell: String(form.get('cell') ?? ''), street: String(form.get('street') ?? ''), building: String(form.get('building') ?? ''), description: String(form.get('description') ?? ''), tin: String(form.get('tin') ?? ''), password, confirmPassword }
     const response = await fetch(`${apiBase}/api/companies`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(registration) })
     const result = await response.json() as { error?: string }
     if (!response.ok) { setAuthError(result.error ?? 'Company registration could not be saved.'); return }
@@ -83,13 +95,17 @@ function App() {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
     const registration = Object.fromEntries(form.entries())
-    const response = await fetch(`${apiBase}/api/auth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(registration) })
-    const result = await response.json() as { error?: string; message?: string; customerId?: string }
-    if (!response.ok) { setAuthError(result.error ?? 'Customer registration failed.'); return }
-    setCustomerId(result.customerId ?? '')
-    setCustomerRegister(false)
-    setCustomerPortal(true)
-    setAuthError('')
+    try {
+      const response = await fetch(`${apiBase}/api/auth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(registration) })
+      const result = await response.json() as { error?: string; message?: string; customerId?: string }
+      if (!response.ok) { setAuthError(result.error ?? 'Customer registration failed. Your details are still available to retry.'); return }
+      setCustomerId(result.customerId ?? '')
+      setCustomerRegister(false)
+      setCustomerPortal(true)
+      setAuthError('')
+    } catch {
+      setAuthError('Could not connect to the server. Your details were not saved; check your connection and retry.')
+    }
   }
 
   if (adminPortal) return <AdminPortal email={adminEmail} token={adminToken} onLogout={() => { setAdminPortal(false); setAdminToken('') }} />
@@ -118,7 +134,10 @@ function Step({ number, title, text }: { number: string; title: string; text: st
 function CheckItem({ text }: { text: string }) { return <div className="check-item"><span><Check size={13} /></span>{text}</div> }
 function CustomerRegisterDialog({ authError, onClose, onSubmit }: { authError: string; onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void | Promise<void> }) {
   const [step, setStep] = useState(1)
-  const [coordinates, setCoordinates] = useState<{ latitude: number; longitude: number } | null>(null)
+  const [coordinates, setCoordinates] = useState<{
+    latitude: number
+    longitude: number
+  } | null>(null)
   const [locationError, setLocationError] = useState('')
   const [formError, setFormError] = useState('')
   const [formElement, setFormElement] = useState<HTMLFormElement | null>(null)
@@ -129,9 +148,15 @@ function CustomerRegisterDialog({ authError, onClose, onSubmit }: { authError: s
     if (!formElement) return
     if (!formElement.reportValidity()) return
     const submittedValues = Object.fromEntries(new FormData(formElement).entries())
-    setDetails((current) => ({ ...current, ...Object.fromEntries(Object.entries(submittedValues).map(([key, value]) => [key, String(value)])) }))
+    setDetails((current) => ({
+      ...current,
+      ...Object.fromEntries(Object.entries(submittedValues).map(([key, value]) => [key, String(value)])),
+    }))
     if (step === 1) {
-      if (submittedValues.password !== submittedValues.confirmPassword) { setFormError('Passwords do not match.'); return }
+      if (submittedValues.password !== submittedValues.confirmPassword) {
+        setFormError('Passwords do not match.')
+        return
+      }
       setFormError('')
       setStep(2)
     } else if (!coordinates) {
@@ -143,28 +168,275 @@ function CustomerRegisterDialog({ authError, onClose, onSubmit }: { authError: s
   }
   const useCurrentLocation = () => {
     setLocationError('')
-    if (!navigator.geolocation) { setLocationError('Location access is not available in this browser.'); return }
+    if (!navigator.geolocation) {
+      setLocationError('Location access is not available in this browser.')
+      return
+    }
     navigator.geolocation.getCurrentPosition(
-      ({ coords }) => { setCoordinates({ latitude: coords.latitude, longitude: coords.longitude }); setLocationError('') },
+      ({ coords }) => {
+        setCoordinates({
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+        })
+        setLocationError('')
+      },
       () => setLocationError('Current location could not be read. Select your location on the map instead.'),
-      { enableHighAccuracy: true, timeout: 12000 }
+      { enableHighAccuracy: true, timeout: 12000 },
     )
   }
-  return <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><form className="dialog registration-dialog customer-register-dialog" ref={(element) => { if (element) setFormElement(element) }} onSubmit={(event) => { event.preventDefault(); if (!finalSubmitAllowed.current) return; finalSubmitAllowed.current = false; void onSubmit(event) }}><button type="button" className="dialog-close" onClick={onClose} aria-label="Close"><X size={18} /></button><p className="registration-kicker">CUSTOMER REGISTRATION · STEP {step} OF 3</p><h2>{step === 1 ? 'Create your account' : step === 2 ? 'Set your collection location' : 'Confirm your location'}</h2><p className="registration-copy">{step === 1 ? 'Enter your personal and contact details.' : step === 2 ? 'Tell us where collections should take place, then pin the exact spot.' : 'Review the location details before creating your account.'}</p><div className="registration-steps customer-registration-steps">{['Personal details', 'Location', 'Confirmation'].map((label, index) => <div className={`registration-step ${step > index + 1 ? 'complete' : step === index + 1 ? 'active' : ''}`} key={label}><span>{step > index + 1 ? <Check size={14} /> : index + 1}</span><small>{label}</small></div>)}</div>
-    {step === 1 && <div className="registration-fields"><label>Full name<input name="fullName" autoComplete="name" defaultValue={details.fullName ?? ''} placeholder="e.g. Jean Romeo" required /></label><div className="registration-grid"><label>Phone number<input name="phone" type="tel" autoComplete="tel" defaultValue={details.phone ?? ''} placeholder="+250 7xx xxx xxx" required /></label><label>Email address<input name="email" type="email" autoComplete="email" defaultValue={details.email ?? ''} placeholder="you@example.com" required /></label></div><div className="registration-grid"><label>Password<input name="password" type="password" autoComplete="new-password" defaultValue={details.password ?? ''} minLength={8} placeholder="At least 8 characters" required /></label><label>Confirm password<input name="confirmPassword" type="password" autoComplete="new-password" defaultValue={details.confirmPassword ?? ''} minLength={8} placeholder="Repeat your password" required /></label></div></div>}
-    {step === 2 && <div className="registration-fields"><div className="registration-grid"><label>Province / City<input name="province" defaultValue={details.province ?? ''} placeholder="e.g. Kigali City" required /></label><label>District<input name="district" defaultValue={details.district ?? ''} placeholder="e.g. Gasabo" required /></label></div><div className="registration-grid"><label>Sector<input name="sector" defaultValue={details.sector ?? ''} placeholder="e.g. Kimihurura" required /></label><label>Address or street<input name="street" defaultValue={details.street ?? ''} placeholder="Street, house or landmark" required /></label></div><div className="customer-map-tools"><button type="button" className="dialog-cancel" onClick={useCurrentLocation}><Map size={15} /> Use my current location</button><span>{coordinates ? `${coordinates.latitude.toFixed(5)}, ${coordinates.longitude.toFixed(5)}` : 'Select the collection point on the map'}</span></div><Suspense fallback={<div className="customer-registration-map map-loading" role="status">Loading map...</div>}><CustomerLocationMap position={position} interactive selected={Boolean(coordinates)} onSelect={(latitude, longitude) => { setCoordinates({ latitude, longitude }); setFormError('') }} /></Suspense>{locationError && <p className="auth-error" role="alert">{locationError}</p>}</div>}
-    {step === 3 && <div className="customer-location-review"><strong>{details.fullName}</strong><span>{['street', 'sector', 'district', 'province'].map((field) => details[field]).join(', ')}</span><span>Coordinates: {coordinates?.latitude.toFixed(6)}, {coordinates?.longitude.toFixed(6)}</span><Suspense fallback={<div className="customer-registration-map review-map map-loading" role="status">Loading map...</div>}><CustomerLocationMap position={position} selected /></Suspense>{Object.entries(details).map(([name, value]) => <input key={name} type="hidden" name={name} value={value} />)}<input type="hidden" name="latitude" value={coordinates?.latitude ?? ''} /><input type="hidden" name="longitude" value={coordinates?.longitude ?? ''} /></div>}
-    {(formError || authError) && <p className="auth-error" role="alert">{formError || authError}</p>}<div className="dialog-actions customer-registration-actions">{step > 1 && <button type="button" className="dialog-cancel" onClick={() => { if (formElement) { const values = Object.fromEntries(new FormData(formElement).entries()); setDetails((current) => ({ ...current, ...Object.fromEntries(Object.entries(values).map(([key, value]) => [key, String(value)])) })) } setStep((current) => current - 1); setFormError('') }}><ChevronLeft size={15} /> Back</button>}{step < 3 ? <button type="button" className="hero-primary" onClick={validateStep}>Continue <ArrowRight size={15} /></button> : <button className="hero-primary" type="submit" onClick={() => { finalSubmitAllowed.current = true }} disabled={!coordinates}>Confirm location and create account <Check size={15} /></button>}</div></form></div>
+  return (
+    <div
+      className="dialog-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}
+    >
+      <form
+        className="dialog registration-dialog customer-register-dialog"
+        ref={(element) => {
+          if (element) setFormElement(element)
+        }}
+        onSubmit={(event) => {
+          event.preventDefault()
+          if (!finalSubmitAllowed.current) return
+          finalSubmitAllowed.current = false
+          void onSubmit(event)
+        }}
+      >
+        <button type="button" className="dialog-close" onClick={onClose} aria-label="Close">
+          <X size={18} />
+        </button>
+        <p className="registration-kicker">CUSTOMER REGISTRATION · STEP {step} OF 3</p>
+        <h2>{step === 1 ? 'Create your account' : step === 2 ? 'Set your collection location' : 'Confirm your location'}</h2>
+        <p className="registration-copy">{step === 1 ? 'Enter your personal and contact details.' : step === 2 ? 'Tell us where collections should take place, then pin the exact spot.' : 'Review the location details before creating your account.'}</p>
+        <div className="registration-steps customer-registration-steps">
+          {['Personal details', 'Location', 'Confirmation'].map((label, index) => (
+            <div className={`registration-step ${step > index + 1 ? 'complete' : step === index + 1 ? 'active' : ''}`} key={label}>
+              <span>{step > index + 1 ? <Check size={14} /> : index + 1}</span>
+              <small>{label}</small>
+            </div>
+          ))}
+        </div>
+        {step === 1 && (
+          <div className="registration-fields">
+            <label>
+              Full name
+              <input name="fullName" autoComplete="name" defaultValue={details.fullName ?? ''} placeholder="e.g. Jean Romeo" required />
+            </label>
+            <div className="registration-grid">
+              <label>
+                Phone number
+                <input name="phone" type="tel" autoComplete="tel" defaultValue={details.phone ?? ''} placeholder="+250 7xx xxx xxx" required />
+              </label>
+              <label>
+                Email address
+                <input name="email" type="email" autoComplete="email" defaultValue={details.email ?? ''} placeholder="you@example.com" required />
+              </label>
+            </div>
+            <div className="registration-grid">
+              <label>
+                Password
+                <input name="password" type="password" autoComplete="new-password" defaultValue={details.password ?? ''} minLength={8} placeholder="At least 8 characters" required />
+              </label>
+              <label>
+                Confirm password
+                <input name="confirmPassword" type="password" autoComplete="new-password" defaultValue={details.confirmPassword ?? ''} minLength={8} placeholder="Repeat your password" required />
+              </label>
+            </div>
+          </div>
+        )}
+        {step === 2 && (
+          <div className="registration-fields">
+            <div className="registration-grid">
+              <label>
+                Province / City
+                <select
+                  name="province"
+                  value={details.province ?? ''}
+                  onChange={(event) =>
+                    setDetails((current) => ({
+                      ...current,
+                      province: event.target.value,
+                      district: '',
+                      sector: '',
+                    }))
+                  }
+                  required
+                >
+                  <option value="">Select province</option>
+                  {rwandaProvinces.map((province) => (
+                    <option key={province} value={province}>
+                      {province === 'Kigali' ? 'Kigali City' : province}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                District
+                <select
+                  name="district"
+                  value={details.district ?? ''}
+                  onChange={(event) =>
+                    setDetails((current) => ({
+                      ...current,
+                      district: event.target.value,
+                      sector: '',
+                    }))
+                  }
+                  disabled={!details.province}
+                  required
+                >
+                  <option value="">Select district</option>
+                  {getRwandaDistricts(details.province ?? '').map((district) => (
+                    <option key={district} value={district}>
+                      {district}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="registration-grid">
+              <label>
+                Sector
+                <select
+                  name="sector"
+                  value={details.sector ?? ''}
+                  onChange={(event) =>
+                    setDetails((current) => ({
+                      ...current,
+                      sector: event.target.value,
+                    }))
+                  }
+                  disabled={!details.district}
+                  required
+                >
+                  <option value="">Select sector</option>
+                  {getRwandaSectors(details.province ?? '', details.district ?? '').map((sector) => (
+                    <option key={sector} value={sector}>
+                      {sector}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Address or street
+                <input name="street" defaultValue={details.street ?? ''} placeholder="Street, house or landmark" required />
+              </label>
+            </div>
+            <div className="customer-map-tools">
+              <button type="button" className="dialog-cancel" onClick={useCurrentLocation}>
+                <Map size={15} /> Use my current location
+              </button>
+              <span>{coordinates ? `${coordinates.latitude.toFixed(5)}, ${coordinates.longitude.toFixed(5)}` : 'Select the collection point on the map'}</span>
+            </div>
+            <Suspense
+              fallback={
+                <div className="customer-registration-map map-loading" role="status">
+                  Loading map...
+                </div>
+              }
+            >
+              <CustomerLocationMap
+                position={position}
+                interactive
+                selected={Boolean(coordinates)}
+                onSelect={(latitude, longitude) => {
+                  setCoordinates({ latitude, longitude })
+                  setFormError('')
+                }}
+              />
+            </Suspense>
+            {locationError && (
+              <p className="auth-error" role="alert">
+                {locationError}
+              </p>
+            )}
+          </div>
+        )}
+        {step === 3 && (
+          <div className="customer-location-review">
+            <strong>{details.fullName}</strong>
+            <span>{['street', 'sector', 'district', 'province'].map((field) => details[field]).join(', ')}</span>
+            <span>
+              Coordinates: {coordinates?.latitude.toFixed(6)}, {coordinates?.longitude.toFixed(6)}
+            </span>
+            <Suspense
+              fallback={
+                <div className="customer-registration-map review-map map-loading" role="status">
+                  Loading map...
+                </div>
+              }
+            >
+              <CustomerLocationMap position={position} selected />
+            </Suspense>
+            {Object.entries(details).map(([name, value]) => (
+              <input key={name} type="hidden" name={name} value={value} />
+            ))}
+            <input type="hidden" name="latitude" value={coordinates?.latitude ?? ''} />
+            <input type="hidden" name="longitude" value={coordinates?.longitude ?? ''} />
+          </div>
+        )}
+        {(formError || authError) && (
+          <p className="auth-error" role="alert">
+            {formError || authError}
+          </p>
+        )}
+        <div className="dialog-actions customer-registration-actions">
+          {step > 1 && (
+            <button
+              type="button"
+              className="dialog-cancel"
+              onClick={() => {
+                if (formElement) {
+                  const values = Object.fromEntries(new FormData(formElement).entries())
+                  setDetails((current) => ({
+                    ...current,
+                    ...Object.fromEntries(Object.entries(values).map(([key, value]) => [key, String(value)])),
+                  }))
+                }
+                setStep((current) => current - 1)
+                setFormError('')
+              }}
+            >
+              <ChevronLeft size={15} /> Back
+            </button>
+          )}
+          {step < 3 ? (
+            <button type="button" className="hero-primary" onClick={validateStep}>
+              Continue <ArrowRight size={15} />
+            </button>
+          ) : (
+            <button
+              className="hero-primary"
+              type="submit"
+              onClick={() => {
+                finalSubmitAllowed.current = true
+              }}
+              disabled={!coordinates}
+            >
+              Confirm location and create account <Check size={15} />
+            </button>
+          )}
+        </div>
+      </form>
+    </div>
+  )
 }
-
 
 function Dialog({ type, submitted, forgotPassword, authError, onGoogleSignIn, onCustomerRegister, onForgotPassword, onBackToSignIn, onClose, onSubmit }: { type: Exclude<Dialog, null>; submitted: boolean; forgotPassword: boolean; authError: string; onGoogleSignIn: (credential?: string) => void | Promise<void>; onCustomerRegister: () => void; onForgotPassword: () => void; onBackToSignIn: () => void; onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void | Promise<void> }) {
   useEffect(() => {
     const element = document.getElementById('google-signin-button')
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined
     if (!element || !clientId || !window.google) return
-    window.google.accounts.id.initialize({ client_id: clientId, callback: ({ credential }) => void onGoogleSignIn(credential) })
-    window.google.accounts.id.renderButton(element, { theme: 'outline', size: 'large', width: 320 })
+    window.google.accounts.id.initialize({
+      client_id: clientId,
+      callback: ({ credential }) => void onGoogleSignIn(credential),
+    })
+    window.google.accounts.id.renderButton(element, {
+      theme: 'outline',
+      size: 'large',
+      width: 320,
+    })
   }, [onGoogleSignIn])
   const register = type === 'register'
   const resetSent = forgotPassword && submitted
@@ -174,23 +446,324 @@ function Dialog({ type, submitted, forgotPassword, authError, onGoogleSignIn, on
   const [verificationFile, setVerificationFile] = useState<File | null>(null)
   const [values, setValues] = useState<Record<string, string>>({})
   const setValue = (name: string, value: string) => setValues((current) => ({ ...current, [name]: value }))
+  const locationSelect = (name: 'province' | 'district' | 'sector', placeholder: string, options: string[], disabled = false) => (
+    <select
+      name={name}
+      value={values[name] ?? ''}
+      onChange={(event) => {
+        const value = event.target.value
+        setValues((current) => ({
+          ...current,
+          [name]: value,
+          ...(name === 'province' ? { district: '', sector: '' } : {}),
+          ...(name === 'district' ? { sector: '' } : {}),
+        }))
+      }}
+      required
+      disabled={disabled}
+    >
+      <option value="">{placeholder}</option>
+      {options.map((option) => (
+        <option key={option} value={option}>
+          {name === 'province' && option === 'Kigali' ? 'Kigali City' : option}
+        </option>
+      ))}
+    </select>
+  )
   const input = (name: string, placeholder: string, options?: { type?: string; required?: boolean }) => <input name={name} value={values[name] ?? ''} onChange={(event) => setValue(name, event.target.value)} placeholder={placeholder} type={options?.type} required={options?.required ?? true} minLength={options?.type === 'password' ? 8 : undefined} />
-  const passwordChecks = { length: (values.password ?? '').length >= 8, uppercase: /[A-Z]/.test(values.password ?? ''), lowercase: /[a-z]/.test(values.password ?? ''), number: /\d/.test(values.password ?? ''), symbol: /[^A-Za-z0-9]/.test(values.password ?? ''), match: Boolean(values.password) && values.password === values.confirmPassword }
+  const passwordChecks = {
+    length: (values.password ?? '').length >= 8,
+    uppercase: /[A-Z]/.test(values.password ?? ''),
+    lowercase: /[a-z]/.test(values.password ?? ''),
+    number: /\d/.test(values.password ?? ''),
+    symbol: /[^A-Za-z0-9]/.test(values.password ?? ''),
+    match: Boolean(values.password) && values.password === values.confirmPassword,
+  }
   const strongPassword = Object.values(passwordChecks).every(Boolean)
   const normalizedCompanyName = (values.companyName ?? '').trim().toLowerCase()
   const normalizedDocumentName = (values.documentCompanyName ?? '').trim().toLowerCase()
-  const verificationReady = Boolean(
-    rdbChoice &&
-    termsAccepted &&
-    (verificationFile || rdbChoice === 'not-yet') &&
-    (
-      rdbChoice === 'not-yet' ||
-      (values.rdbNumber && normalizedDocumentName && normalizedCompanyName && normalizedDocumentName === normalizedCompanyName)
-    ) &&
-    (values.fullName && values.email && values.password && values.confirmPassword && strongPassword)
+  const verificationReady = Boolean(rdbChoice && termsAccepted && (verificationFile || rdbChoice === 'not-yet') && (rdbChoice === 'not-yet' || (values.rdbNumber && normalizedDocumentName && normalizedCompanyName && normalizedDocumentName === normalizedCompanyName)) && values.fullName && values.email && values.password && values.confirmPassword && strongPassword)
+  const nextStep = () => {
+    if (step === 1 && (!values.fullName || !values.email || !strongPassword)) return
+    if (step === 2 && (!values.companyName || !values.province || !values.district || !values.sector || !values.phone)) return
+    setStep((current) => Math.min(3, current + 1))
+  }
+  return (
+    <div
+      className="dialog-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}
+    >
+      <form className={register ? 'dialog registration-dialog' : 'dialog'} onSubmit={onSubmit}>
+        <button type="button" className="dialog-close" onClick={onClose} aria-label="Close">
+          <X size={18} />
+        </button>
+        {submitted ? (
+          <div className="dialog-success">
+            <span>
+              <Check size={23} />
+            </span>
+            <h2>{resetSent ? 'Check your email' : register ? 'Registration request received' : 'Welcome back'}</h2>
+            <p>{resetSent ? 'If an account exists for that email, your password reset link has been sent.' : register ? 'We will review your company details and contact you with the next step.' : 'Sign-in is ready to connect to your EcoRoute workspace.'}</p>
+            <button type="button" className="hero-primary" onClick={onClose}>
+              Close <ArrowRight size={16} />
+            </button>
+          </div>
+        ) : register ? (
+          <>
+            <p className="registration-kicker">REGISTER COMPANY</p>
+            <h2>Create your company account</h2>
+            <p className="registration-copy">Three steps. The administrator reviews every application before it goes live.</p>
+            <div className="registration-steps">
+              {[
+                ['Your account', UserCircle2],
+                ['Company details', Building2],
+                ['Verification', FileCheck2],
+              ].map(([title, Icon], index) => (
+                <div className={`registration-step ${step > index + 1 ? 'complete' : step === index + 1 ? 'active' : ''}`} key={String(title)}>
+                  <span>{step > index + 1 ? <Check size={14} /> : <Icon size={14} />}</span>
+                  <small>{String(title)}</small>
+                </div>
+              ))}
+            </div>
+            {step === 1 && (
+              <div className="registration-fields">
+                <label>Full name{input('fullName', 'e.g. Jean Romeo')}</label>
+                <label>
+                  Primary email
+                  {input('email', 'you@company.rw', { type: 'email' })}{' '}
+                </label>
+                <div className="registration-grid">
+                  <label>
+                    Password
+                    {input('password', 'At least 8 characters', {
+                      type: 'password',
+                    })}
+                  </label>
+                  <label>
+                    Confirm password
+                    {input('confirmPassword', 'Repeat your password', {
+                      type: 'password',
+                    })}
+                  </label>
+                </div>{' '}
+                <div className="password-guide">
+                  <strong>Use a strong password:</strong>
+                  <span className={passwordChecks.length ? 'valid' : ''}>✓ At least 8 characters</span>
+                  <span className={passwordChecks.uppercase ? 'valid' : ''}>✓ One uppercase letter</span>
+                  <span className={passwordChecks.lowercase ? 'valid' : ''}>✓ One lowercase letter</span>
+                  <span className={passwordChecks.number ? 'valid' : ''}>✓ One number</span>
+                  <span className={passwordChecks.symbol ? 'valid' : ''}>✓ One symbol</span>
+                  <span className={passwordChecks.match ? 'valid' : ''}>✓ Passwords match</span>
+                </div>
+              </div>
+            )}
+            {step === 2 && (
+              <div className="registration-fields">
+                <label>
+                  Business / company name
+                  {input('companyName', 'e.g. Kigali Clean Ltd')}
+                </label>
+                <p className="field-caption">WHERE IS YOUR BUSINESS LOCATED?</p>
+                <div className="registration-grid">
+                  <label>
+                    Province
+                    {locationSelect('province', 'Select province', rwandaProvinces)}
+                  </label>
+                  <label>
+                    District
+                    {locationSelect('district', 'Select district', getRwandaDistricts(values.province ?? ''), !values.province)}
+                  </label>
+                  <label>
+                    Sector
+                    {locationSelect('sector', 'Select sector', getRwandaSectors(values.province ?? '', values.district ?? ''), !values.district)}
+                  </label>
+                  <label>Cell{input('cell', 'e.g. Kacyiru')}</label>
+                  <label>Street{input('street', 'e.g. KG 11 Ave')}</label>
+                  <label>
+                    Building
+                    {input('building', 'e.g. Kigali Heights, 3rd floor')}
+                  </label>
+                </div>
+                <label>
+                  Description of your business
+                  <textarea name="description" value={values.description ?? ''} onChange={(event) => setValue('description', event.target.value)} placeholder="What waste do you collect, which areas do you serve, how many households..." required />
+                </label>
+                <div className="registration-grid">
+                  <label>
+                    Phone number (boss)
+                    {input('phone', '+250 7xx xxx xxx', { type: 'tel' })}
+                  </label>
+                  <label>
+                    Phone number (office, optional)
+                    {input('officePhone', '+250 7xx xxx xxx', {
+                      type: 'tel',
+                      required: false,
+                    })}
+                  </label>
+                </div>
+              </div>
+            )}
+            {step === 3 && (
+              <div className="registration-fields">
+                <input type="hidden" name="fullName" value={values.fullName ?? ''} />
+                <input type="hidden" name="email" value={values.email ?? ''} />
+                <input type="hidden" name="password" value={values.password ?? ''} />
+                <input type="hidden" name="confirmPassword" value={values.confirmPassword ?? ''} />
+                <input type="hidden" name="companyName" value={values.companyName ?? ''} />
+                <input type="hidden" name="phone" value={values.phone ?? ''} />
+                <input type="hidden" name="officePhone" value={values.officePhone ?? ''} />
+                <input type="hidden" name="province" value={values.province ?? ''} />
+                <input type="hidden" name="district" value={values.district ?? ''} />
+                <input type="hidden" name="sector" value={values.sector ?? ''} />
+                <input type="hidden" name="cell" value={values.cell ?? ''} />
+                <input type="hidden" name="street" value={values.street ?? ''} />
+                <input type="hidden" name="building" value={values.building ?? ''} />
+                <input type="hidden" name="description" value={values.description ?? ''} />
+                <input type="hidden" name="address" value={[values.province, values.district, values.sector, values.cell, values.street, values.building].filter(Boolean).join(', ')} /> <input type="hidden" name="tin" value={values.rdbNumber ?? `${rdbChoice === 'registered' ? 'RDB' : 'TAX'}-${values.email ?? ''}`} />
+                <label>Is your company registered in RDB?</label>
+                <div className="choice-grid">
+                  <button type="button" className={rdbChoice === 'registered' ? 'choice-card selected' : 'choice-card'} onClick={() => setRdbChoice('registered')}>
+                    <strong>Yes, registered in RDB</strong>
+                    <small>You will enter your RDB business registration certificate.</small>
+                  </button>
+                  <button type="button" className={rdbChoice === 'not-yet' ? 'choice-card selected' : 'choice-card'} onClick={() => setRdbChoice('not-yet')}>
+                    <strong>No, not yet</strong>
+                    <small>You will upload a recent tax bill instead.</small>
+                  </button>
+                </div>
+                {rdbChoice === 'registered' && (
+                  <>
+                    <label>
+                      RDB business registration certificate number
+                      {input('rdbNumber', 'e.g. 123456789')}
+                    </label>
+                    <label>
+                      Company name on uploaded document
+                      {input('documentCompanyName', 'Enter the exact registered company name')}
+                    </label>
+                    <label className="upload-field">
+                      Upload the RDB certificate
+                      <input type="file" accept=".pdf,image/*" onChange={(event) => setVerificationFile(event.target.files?.[0] ?? null)} />
+                    </label>
+                  </>
+                )}
+                {rdbChoice === 'not-yet' && (
+                  <label className="upload-field">
+                    Upload your tax bill
+                    <input type="file" accept=".pdf,image/*" onChange={(event) => setVerificationFile(event.target.files?.[0] ?? null)} />
+                  </label>
+                )}
+                <label className="terms-check registration-terms">
+                  <input type="checkbox" checked={termsAccepted} onChange={(event) => setTermsAccepted(event.target.checked)} />
+                  <span>
+                    I agree to the business <a href="#contact">Terms &amp; Conditions of Use</a> and the <a href="#contact">Privacy Notice</a>, and I confirm the information provided is true.
+                  </span>
+                </label>{' '}
+              </div>
+            )}
+            {authError && (
+              <p className="auth-error" role="alert">
+                {authError}
+              </p>
+            )}
+            <div className="dialog-actions registration-actions">
+              {step > 1 ? (
+                <button type="button" className="dialog-cancel" onClick={() => setStep((current) => current - 1)}>
+                  <ChevronLeft size={15} /> Back
+                </button>
+              ) : (
+                <button type="button" className="dialog-cancel" onClick={onClose}>
+                  Cancel
+                </button>
+              )}
+              {step < 3 ? (
+                <button type="button" className="hero-primary" onClick={nextStep}>
+                  Next <ArrowRight size={15} />
+                </button>
+              ) : (
+                <button className="hero-primary" type="submit" disabled={!verificationReady}>
+                  Finish &amp; send application <ArrowRight size={15} />
+                </button>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            {!register && (
+              <div className="signin-fields">
+                {forgotPassword ? (
+                  <label>
+                    Email address
+                    {input('email', 'you@company.com', { type: 'email' })}
+                  </label>
+                ) : (
+                  <>
+                    <label>
+                      Email address
+                      {input('email', 'you@company.com', { type: 'email' })}
+                    </label>{' '}
+                    <label>
+                      Password
+                      {input('password', '••••••••', { type: 'password' })}
+                    </label>
+                  </>
+                )}{' '}
+              </div>
+            )}
+            {!forgotPassword && (
+              <>
+                <div id="google-signin-button" className="google-signin">
+                  <button type="button" onClick={() => void onGoogleSignIn()}>
+                    <span>G</span> Continue with Google
+                  </button>
+                </div>
+                <div className="signin-divider">
+                  <span>or sign in with email</span>
+                </div>
+              </>
+            )}
+            {authError && (
+              <p className="auth-error" role="alert">
+                {authError}
+              </p>
+            )}
+            <label className="terms-check signin-terms">
+              <input type="checkbox" checked={termsAccepted} onChange={(event) => setTermsAccepted(event.target.checked)} />
+              <span>
+                I agree to the <a href="#contact">Terms and Conditions</a> and <a href="#contact">Privacy Policy</a>.
+              </span>
+            </label>
+            <div className="dialog-actions">
+              {forgotPassword ? (
+                <button type="button" className="dialog-cancel" onClick={onBackToSignIn}>
+                  Back to sign in
+                </button>
+              ) : (
+                <button type="button" className="dialog-cancel" onClick={onClose}>
+                  Cancel
+                </button>
+              )}
+              <button className="hero-primary" type="submit" disabled={!forgotPassword && (!values.email || !values.password || !termsAccepted)}>
+                {forgotPassword ? 'Send reset link' : 'Continue'} <ArrowRight size={15} />
+              </button>
+            </div>
+            {!register && !forgotPassword && (
+              <>
+                <button type="button" className="forgot-link" onClick={onForgotPassword}>
+                  Forgot password?
+                </button>
+                <button type="button" className="forgot-link" onClick={onCustomerRegister}>
+                  Create a customer account
+                </button>
+              </>
+            )}
+          </>
+        )}
+      </form>
+    </div>
   )
-  const nextStep = () => { if (step === 1 && (!values.fullName || !values.email || !strongPassword)) return; if (step === 2 && (!values.companyName || !values.province || !values.district || !values.phone)) return; setStep((current) => Math.min(3, current + 1)) }
-return <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><form className={register ? 'dialog registration-dialog' : 'dialog'} onSubmit={onSubmit}><button type="button" className="dialog-close" onClick={onClose} aria-label="Close"><X size={18} /></button>{submitted ? <div className="dialog-success"><span><Check size={23} /></span><h2>{resetSent ? 'Check your email' : register ? 'Registration request received' : 'Welcome back'}</h2><p>{resetSent ? 'If an account exists for that email, your password reset link has been sent.' : register ? 'We will review your company details and contact you with the next step.' : 'Sign-in is ready to connect to your EcoRoute workspace.'}</p><button type="button" className="hero-primary" onClick={onClose}>Close <ArrowRight size={16} /></button></div> : register ? <><p className="registration-kicker">REGISTER COMPANY</p><h2>Create your company account</h2><p className="registration-copy">Three steps. The administrator reviews every application before it goes live.</p><div className="registration-steps">{[['Your account', UserCircle2], ['Company details', Building2], ['Verification', FileCheck2]].map(([title, Icon], index) => <div className={`registration-step ${step > index + 1 ? 'complete' : step === index + 1 ? 'active' : ''}`} key={String(title)}><span>{step > index + 1 ? <Check size={14} /> : <Icon size={14} />}</span><small>{String(title)}</small></div>)}</div>{step === 1 && <div className="registration-fields"><label>Full name{input('fullName', 'e.g. Jean Romeo')}</label><label>Primary email{input('email', 'you@company.rw', { type: 'email' })}  </label><div className="registration-grid"><label>Password{input('password', 'At least 8 characters', { type: 'password' })}</label><label>Confirm password{input('confirmPassword', 'Repeat your password', { type: 'password' })}</label></div>  <div className="password-guide"><strong>Use a strong password:</strong><span className={passwordChecks.length ? 'valid' : ''}>✓ At least 8 characters</span><span className={passwordChecks.uppercase ? 'valid' : ''}>✓ One uppercase letter</span><span className={passwordChecks.lowercase ? 'valid' : ''}>✓ One lowercase letter</span><span className={passwordChecks.number ? 'valid' : ''}>✓ One number</span><span className={passwordChecks.symbol ? 'valid' : ''}>✓ One symbol</span><span className={passwordChecks.match ? 'valid' : ''}>✓ Passwords match</span></div></div>}{step === 2 && <div className="registration-fields"><label>Business / company name{input('companyName', 'e.g. Kigali Clean Ltd')}</label><p className="field-caption">WHERE IS YOUR BUSINESS LOCATED?</p><div className="registration-grid"><label>Province{input('province', 'Select province')}</label><label>District{input('district', 'Select district')}</label><label>Sector{input('sector', 'e.g. Gasabo')}</label><label>Cell{input('cell', 'e.g. Kacyiru')}</label><label>Street{input('street', 'e.g. KG 11 Ave')}</label><label>Building{input('building', 'e.g. Kigali Heights, 3rd floor')}</label></div><label>Description of your business<textarea name="description" value={values.description ?? ''} onChange={(event) => setValue('description', event.target.value)} placeholder="What waste do you collect, which areas do you serve, how many households..." required /></label><div className="registration-grid"><label>Phone number (boss){input('phone', '+250 7xx xxx xxx', { type: 'tel' })}</label><label>Phone number (office, optional){input('officePhone', '+250 7xx xxx xxx', { type: 'tel', required: false })}</label></div></div>}{step === 3 && <div className="registration-fields"><input type="hidden" name="fullName" value={values.fullName ?? ''} /><input type="hidden" name="email" value={values.email ?? ''} /><input type="hidden" name="password" value={values.password ?? ''} /><input type="hidden" name="confirmPassword" value={values.confirmPassword ?? ''} /><input type="hidden" name="companyName" value={values.companyName ?? ''} /><input type="hidden" name="phone" value={values.phone ?? ''} /><input type="hidden" name="address" value={[values.province, values.district, values.sector, values.cell, values.street, values.building].filter(Boolean).join(', ')} />    <input type="hidden" name="tin" value={values.rdbNumber ?? `${rdbChoice === 'registered' ? 'RDB' : 'TAX'}-${values.email ?? ''}`} /><label>Is your company registered in RDB?</label><div className="choice-grid"><button type="button" className={rdbChoice === 'registered' ? 'choice-card selected' : 'choice-card'} onClick={() => setRdbChoice('registered')}><strong>Yes, registered in RDB</strong><small>You will enter your RDB business registration certificate.</small></button><button type="button" className={rdbChoice === 'not-yet' ? 'choice-card selected' : 'choice-card'} onClick={() => setRdbChoice('not-yet')}><strong>No, not yet</strong><small>You will upload a recent tax bill instead.</small></button></div>{rdbChoice === 'registered' && <><label>RDB business registration certificate number{input('rdbNumber', 'e.g. 123456789')}</label><label>Company name on uploaded document{input('documentCompanyName', 'Enter the exact registered company name')}</label><label className="upload-field">Upload the RDB certificate<input type="file" accept=".pdf,image/*" onChange={(event) => setVerificationFile(event.target.files?.[0] ?? null)} /></label></>}{rdbChoice === 'not-yet' && <label className="upload-field">Upload your tax bill<input type="file" accept=".pdf,image/*" onChange={(event) => setVerificationFile(event.target.files?.[0] ?? null)} /></label>}<label className="terms-check registration-terms"><input type="checkbox" checked={termsAccepted} onChange={(event) => setTermsAccepted(event.target.checked)} /><span>I agree to the business <a href="#contact">Terms &amp; Conditions of Use</a> and the <a href="#contact">Privacy Notice</a>, and I confirm the information provided is true.</span></label>      </div>}{authError && <p className="auth-error" role="alert">{authError}</p>}<div className="dialog-actions registration-actions">{step > 1 ? <button type="button" className="dialog-cancel" onClick={() => setStep((current) => current - 1)}><ChevronLeft size={15} /> Back</button> : <button type="button" className="dialog-cancel" onClick={onClose}>Cancel</button>}{step < 3 ? <button type="button" className="hero-primary" onClick={nextStep}>Next <ArrowRight size={15} /></button> : <button className="hero-primary" type="submit" disabled={!verificationReady}>Finish &amp; send application <ArrowRight size={15} /></button>}</div></> : <>{!register && <div className="signin-fields">{forgotPassword ? <label>Email address{input('email', 'you@company.com', { type: 'email' })}</label> : <><label>Email address{input('email', 'you@company.com', { type: 'email' })}</label>  <label>Password{input('password', '••••••••', { type: 'password' })}</label></>}  </div>}{!forgotPassword && <><div id="google-signin-button" className="google-signin"><button type="button" onClick={() => void onGoogleSignIn()}><span>G</span> Continue with Google</button></div><div className="signin-divider"><span>or sign in with email</span></div></>}{authError && <p className="auth-error" role="alert">{authError}</p>}<label className="terms-check signin-terms"><input type="checkbox" checked={termsAccepted} onChange={(event) => setTermsAccepted(event.target.checked)} /><span>I agree to the <a href="#contact">Terms and Conditions</a> and <a href="#contact">Privacy Policy</a>.</span></label><div className="dialog-actions">{forgotPassword ? <button type="button" className="dialog-cancel" onClick={onBackToSignIn}>Back to sign in</button> : <button type="button" className="dialog-cancel" onClick={onClose}>Cancel</button>}<button className="hero-primary" type="submit" disabled={!forgotPassword && (!values.email || !values.password || !termsAccepted)}>{forgotPassword ? 'Send reset link' : 'Continue'} <ArrowRight size={15} /></button></div>{!register && !forgotPassword && <><button type="button" className="forgot-link" onClick={onForgotPassword}>Forgot password?</button><button type="button" className="forgot-link" onClick={onCustomerRegister}>Create a customer account</button></>}</>}</form></div>
 }
 
 export default App
