@@ -4,15 +4,15 @@ import './App.css'
 
 type Customer = { id: string; name: string; phone?: string; location: string; plan: string; balance: string; status: string }
 type Payment = { id: string; customerId: string; customer: string; amount: number; method: string; reference: string; paidAt: string }
-const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5001'
+const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
 const formatRwfAmount = new Intl.NumberFormat('en-RW', { maximumFractionDigits: 0 })
 const currency = (amount: number) => `RWF ${formatRwfAmount.format(amount)}`
 const formatDate = (value: string) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 
-async function fetchCompanyPaymentData() {
+async function fetchCompanyPaymentData(companyId: string) {
   const [customersResponse, paymentsResponse] = await Promise.all([
-    fetch(`${apiBase}/api/customers`),
-    fetch(`${apiBase}/api/payments`),
+    fetch(`${apiBase}/api/customers?companyId=${encodeURIComponent(companyId)}`),
+    fetch(`${apiBase}/api/payments?companyId=${encodeURIComponent(companyId)}`),
   ])
   const [customerData, paymentData] = await Promise.all([
     customersResponse.json() as Promise<Customer[] | { error?: string }>,
@@ -23,7 +23,7 @@ async function fetchCompanyPaymentData() {
   return { customers: customerData as Customer[], payments: paymentData as Payment[] }
 }
 
-export function CompanyPaymentsView() {
+export function CompanyPaymentsView({ companyId }: { companyId: string }) {
   const [customers, setCustomers] = useState<Customer[]>([])
   const [payments, setPayments] = useState<Payment[]>([])
   const [query, setQuery] = useState('')
@@ -34,7 +34,7 @@ export function CompanyPaymentsView() {
 
   const loadData = async () => {
     try {
-      const data = await fetchCompanyPaymentData()
+      const data = await fetchCompanyPaymentData(companyId)
       setCustomers(data.customers)
       setPayments(data.payments)
       setError('')
@@ -47,7 +47,7 @@ export function CompanyPaymentsView() {
 
   useEffect(() => {
     let active = true
-    void fetchCompanyPaymentData()
+    void fetchCompanyPaymentData(companyId)
       .then((data) => {
         if (!active) return
         setCustomers(data.customers)
@@ -58,7 +58,7 @@ export function CompanyPaymentsView() {
       })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
-  }, [])
+  }, [companyId])
 
   const totalOutstanding = customers.reduce((total, customer) => total + parseFloat(customer.balance.replace(/[^0-9.]/g, '') || '0'), 0)
   const totalCollected = payments.reduce((total, payment) => total + payment.amount, 0)
@@ -94,11 +94,11 @@ export function CompanyPaymentsView() {
       })}
       {!loading && filteredCustomers.length === 0 && <p className="company-loading">No customer accounts found.</p>}
     </section>
-    {showForm && <RecordPaymentDialog customers={customers.filter((customer) => parseFloat(customer.balance.replace(/[^0-9.]/g, '') || '0') > 0)} onClose={() => setShowForm(false)} onSaved={async () => { setShowForm(false); setNotice('Payment recorded and balance updated.'); await loadData() }} />}
+    {showForm && <RecordPaymentDialog companyId={companyId} customers={customers.filter((customer) => parseFloat(customer.balance.replace(/[^0-9.]/g, '') || '0') > 0)} onClose={() => setShowForm(false)} onSaved={async () => { setShowForm(false); setNotice('Payment recorded and balance updated.'); await loadData() }} />}
   </>
 }
 
-function RecordPaymentDialog({ customers, onClose, onSaved }: { customers: Customer[]; onClose: () => void; onSaved: () => Promise<void> }) {
+function RecordPaymentDialog({ companyId, customers, onClose, onSaved }: { companyId: string; customers: Customer[]; onClose: () => void; onSaved: () => Promise<void> }) {
   const [customerId, setCustomerId] = useState(customers[0]?.id ?? '')
   const [amount, setAmount] = useState('')
   const [method, setMethod] = useState('Mobile money')
@@ -114,7 +114,7 @@ function RecordPaymentDialog({ customers, onClose, onSaved }: { customers: Custo
     setSubmitting(true)
     setError('')
     try {
-      const response = await fetch(`${apiBase}/api/payments`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerId, amount: value, method }) })
+      const response = await fetch(`${apiBase}/api/payments`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerId, companyId, amount: value, method }) })
       const result = await response.json() as { error?: string }
       if (!response.ok) throw new Error(result.error || 'Payment could not be recorded')
       await onSaved()

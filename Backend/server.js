@@ -9,7 +9,7 @@ dotenv.config();
 
 const app = express();
 const { Pool } = pg;
-const port = Number(process.env.PORT || 5001);
+const port = Number(process.env.PORT || 5000);
 const adminEmail = (process.env.ADMIN_EMAIL || 'diope2diope@gmail.com').toLowerCase();
 const adminPassword = process.env.ADMIN_PASSWORD || 'Diope00132';
 const geminiModel = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
@@ -139,6 +139,41 @@ async function initializeDatabase() {
   await pool.query('ALTER TABLE companies ADD COLUMN IF NOT EXISTS rdb_number VARCHAR(255);');
   await pool.query('ALTER TABLE companies ADD COLUMN IF NOT EXISTS document_company_name VARCHAR(255);');
   await pool.query('ALTER TABLE companies ADD COLUMN IF NOT EXISTS verification_document_name VARCHAR(255);');
+  await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS company_id UUID REFERENCES companies(id);');
+  await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(255);');
+  await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login TIMESTAMPTZ;');
+  await pool.query(`
+    UPDATE users u SET company_id = c.id
+    FROM companies c
+    WHERE u.role = 'company' AND u.company_id IS NULL AND LOWER(u.email) = LOWER(c.email)
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS company_employees (
+      id SERIAL PRIMARY KEY,
+      company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+      employee_id VARCHAR(100) NOT NULL,
+      department VARCHAR(255) NOT NULL,
+      role VARCHAR(100) NOT NULL,
+      status VARCHAR(30) NOT NULL DEFAULT 'Active',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (company_id, employee_id)
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS company_pricing_rules (
+      id SERIAL PRIMARY KEY,
+      company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      customer_type VARCHAR(100) NOT NULL CHECK (customer_type IN ('Household', 'Company / Institution')),
+      amount NUMERIC(12, 2) NOT NULL CHECK (amount > 0),
+      billing_period VARCHAR(50) NOT NULL,
+      description TEXT,
+      active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await pool.query("ALTER TABLE customers ADD COLUMN IF NOT EXISTS customer_type VARCHAR(100) NOT NULL DEFAULT 'Household';");
+  await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS pricing_rule_id INTEGER REFERENCES company_pricing_rules(id);');
   await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS company_id UUID REFERENCES companies(id);');
   await pool.query(`
     CREATE TABLE IF NOT EXISTS payments (
@@ -314,9 +349,11 @@ app.post('/api/auth/login', async (req, res) => {
 
     const result = await pool.query(
       `SELECT u.id, u.email, u.role, u.full_name, u.password_hash,
-        c.id AS customer_id, c.company_id
+        c.id AS customer_id, COALESCE(u.company_id, ce.company_id) AS company_id,
+        ce.role AS employee_role, ce.status AS employee_status
        FROM users u
        LEFT JOIN customers c ON c.user_id = u.id
+       LEFT JOIN company_employees ce ON ce.user_id = u.id
        WHERE u.email = $1`,
       [email]
     );
@@ -332,6 +369,10 @@ app.post('/api/auth/login', async (req, res) => {
     if (user.role === 'customer' && !user.customer_id) {
       return res.status(409).json({ error: 'Complete customer registration with your phone and collection location before signing in.' });
     }
+    if (user.role === 'company_employee' && user.employee_status !== 'Active') {
+      return res.status(403).json({ error: 'This employee account is inactive. Contact your company administrator.' });
+    }
+    await pool.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
     const userResponse = {
       id: user.id,
       email: user.email,
@@ -339,6 +380,7 @@ app.post('/api/auth/login', async (req, res) => {
       full_name: user.full_name,
       customerId: user.customer_id,
       companyId: user.company_id,
+      employeeRole: user.employee_role,
     };
     return res.json({
       user: userResponse,
@@ -578,21 +620,32 @@ app.post('/api/auth/register', async (req, res) => {
       [province, district, sector]
     );
     const company = companyResult.rows[0] ?? null;
+    const householdPricing = company
+      ? await client.query(
+        `SELECT id, amount, billing_period FROM company_pricing_rules
+         WHERE company_id = $1 AND customer_type = 'Household' AND active = TRUE
+         ORDER BY created_at DESC, id DESC LIMIT 1`,
+        [company.id]
+      )
+      : { rows: [] };
+    const householdRule = householdPricing.rows[0] ?? null;
     const customerResult = await client.query(
       `INSERT INTO customers (
-        user_id, company_id, name, phone, location, province, district, sector, street, latitude, longitude,
+        user_id, company_id, pricing_rule_id, customer_type, name, phone, location, province, district, sector, street, latitude, longitude,
         plan, balance, status
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'Weekly · 240 kg', 0, 'Active')
+       ) VALUES ($1, $2, $3, 'Household', $4, $5, $6, $7, $8, $9, $10, $11, $12,
+         $13, $14, 'Active')
        RETURNING id`,
-      [userId, company?.id ?? null, fullName, phone,
-        [street, sector, district, province].join(', '), province, district, sector, street, latitude, longitude]
+      [userId, company?.id ?? null, householdRule?.id ?? null, fullName, phone,
+        [street, sector, district, province].join(', '), province, district, sector, street, latitude, longitude,
+        householdRule ? `${householdRule.billing_period} service` : 'Weekly · 240 kg', householdRule?.amount ?? 0]
     );
     await client.query('COMMIT');
     return res.status(201).json({
       customerId: customerResult.rows[0].id,
       companyId: company?.id ?? null,
       companyName: company?.name ?? null,
-      message: company ? `Account created and assigned to ${company.name}.` : 'Account created. No approved company currently serves this location.',
+      message: company ? householdRule ? `Account created and assigned to ${company.name}.` : `Account created and assigned to ${company.name}; the company has not configured a Household price yet.` : 'Account created. No approved company currently serves this location.',
     });
   } catch (error) {
     await client.query('ROLLBACK');
@@ -649,17 +702,22 @@ app.post('/api/auth/google', async (req, res) => {
 app.get('/api/customers', async (req, res) => {
   try {
     const customerId = String(req.query.customerId ?? '').trim();
+    const companyId = String(req.query.companyId ?? '').trim();
     if (customerId && !/^\d+$/.test(customerId)) {
       return res.status(400).json({ error: 'Customer ID must be a positive integer.' });
     }
+    const filters = [];
+    const values = [];
+    if (customerId) { values.push(Number(customerId)); filters.push(`id = $${values.length}`); }
+    if (companyId) { values.push(companyId); filters.push(`company_id = $${values.length}`); }
 
     const result = await pool.query(
-      `SELECT id::text AS id, name, phone, location, latitude, longitude, plan,
+      `SELECT id::text AS id, name, phone, location, latitude, longitude, plan, customer_type AS "customerType",
         'RWF ' || TO_CHAR(COALESCE(balance, 0), 'FM999G999G999G990') AS balance, status
        FROM customers
-       ${customerId ? 'WHERE id = $1' : ''}
+       ${filters.length ? `WHERE ${filters.join(' AND ')}` : ''}
        ORDER BY name ASC`,
-      customerId ? [Number(customerId)] : []
+      values
     );
     return res.json(result.rows);
   } catch (error) {
@@ -673,16 +731,26 @@ app.post('/api/customers', async (req, res) => {
     const phone = String(req.body?.phone ?? '').trim();
     const location = String(req.body?.location ?? '').trim();
     const plan = String(req.body?.plan ?? '').trim();
-    if (!name || !location || !plan) {
-      return res.status(400).json({ error: 'Customer name, location and service plan are required.' });
+    const companyId = String(req.body?.companyId ?? '').trim();
+    const customerType = String(req.body?.customerType ?? '').trim();
+    if (!name || !location || !plan || !companyId || !['Household', 'Company / Institution'].includes(customerType)) {
+      return res.status(400).json({ error: 'Customer name, location, service plan, company and customer type are required.' });
     }
 
+    const pricing = await pool.query(
+      `SELECT id, amount FROM company_pricing_rules
+       WHERE company_id = $1 AND customer_type = $2 AND active = TRUE
+       ORDER BY created_at DESC, id DESC LIMIT 1`,
+      [companyId, customerType]
+    );
+    if (!pricing.rowCount) return res.status(400).json({ error: `Add an active ${customerType} pricing rule before creating this customer.` });
+
     const result = await pool.query(
-      `INSERT INTO customers (name, phone, location, plan, balance, status)
-       VALUES ($1, $2, $3, $4, 0, 'Active')
-       RETURNING id::text AS id, name, phone, location, plan,
+      `INSERT INTO customers (company_id, pricing_rule_id, customer_type, name, phone, location, plan, balance, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Active')
+       RETURNING id::text AS id, name, phone, location, plan, customer_type AS "customerType",
          'RWF ' || TO_CHAR(COALESCE(balance, 0), 'FM999G999G999G990') AS balance, status`,
-      [name, phone || null, location, plan]
+      [companyId, pricing.rows[0].id, customerType, name, phone || null, location, plan, pricing.rows[0].amount]
     );
     return res.status(201).json(result.rows[0]);
   } catch (error) {
@@ -693,8 +761,9 @@ app.post('/api/customers', async (req, res) => {
 app.patch('/api/customers/:id', async (req, res) => {
   try {
     const customerId = String(req.params.id ?? '').trim();
+    const companyId = String(req.body?.companyId ?? '').trim();
     const status = String(req.body?.status ?? '').trim();
-    if (!/^\d+$/.test(customerId)) {
+    if (!/^\d+$/.test(customerId) || !companyId) {
       return res.status(400).json({ error: 'Customer ID must be a positive integer.' });
     }
     if (!['Active', 'Suspended', 'Archived'].includes(status)) {
@@ -702,10 +771,10 @@ app.patch('/api/customers/:id', async (req, res) => {
     }
 
     const result = await pool.query(
-      `UPDATE customers SET status = $1 WHERE id = $2
+      `UPDATE customers SET status = $1 WHERE id = $2 AND company_id = $3
        RETURNING id::text AS id, name, phone, location, plan,
          'RWF ' || TO_CHAR(COALESCE(balance, 0), 'FM999G999G999G990') AS balance, status`,
-      [status, Number(customerId)]
+      [status, Number(customerId), companyId]
     );
     if (!result.rowCount) return res.status(404).json({ error: 'Customer was not found.' });
     return res.json(result.rows[0]);
@@ -717,11 +786,12 @@ app.patch('/api/customers/:id', async (req, res) => {
 app.delete('/api/customers/:id', async (req, res) => {
   try {
     const customerId = String(req.params.id ?? '').trim();
-    if (!/^\d+$/.test(customerId)) {
+    const companyId = String(req.query.companyId ?? '').trim();
+    if (!/^\d+$/.test(customerId) || !companyId) {
       return res.status(400).json({ error: 'Customer ID must be a positive integer.' });
     }
 
-    const result = await pool.query('DELETE FROM customers WHERE id = $1 RETURNING id', [Number(customerId)]);
+    const result = await pool.query('DELETE FROM customers WHERE id = $1 AND company_id = $2 RETURNING id', [Number(customerId), companyId]);
     if (!result.rowCount) return res.status(404).json({ error: 'Customer was not found.' });
     return res.json({ message: 'Customer deleted successfully.' });
   } catch (error) {
@@ -735,19 +805,24 @@ app.delete('/api/customers/:id', async (req, res) => {
 app.get('/api/payments', async (req, res) => {
   try {
     const customerId = String(req.query.customerId ?? '').trim();
+    const companyId = String(req.query.companyId ?? '').trim();
     if (customerId && !/^\d+$/.test(customerId)) {
       return res.status(400).json({ error: 'Customer ID must be a positive integer.' });
     }
 
+    const filters = [];
+    const values = [];
+    if (customerId) { values.push(Number(customerId)); filters.push(`p.customer_id = $${values.length}`); }
+    if (companyId) { values.push(companyId); filters.push(`c.company_id = $${values.length}`); }
     const result = await pool.query(
       `SELECT p.id::text AS id, p.customer_id::text AS "customerId", c.name AS customer,
         p.amount::double precision AS amount, p.method, p.reference,
         p.paid_at AS "paidAt"
        FROM payments p
        JOIN customers c ON c.id = p.customer_id
-       ${customerId ? 'WHERE p.customer_id = $1' : ''}
+      ${filters.length ? `WHERE ${filters.join(' AND ')}` : ''}
        ORDER BY p.paid_at DESC, p.id DESC`,
-      customerId ? [Number(customerId)] : []
+          values
     );
     return res.json(result.rows);
   } catch (error) {
@@ -759,16 +834,18 @@ app.post('/api/payments', async (req, res) => {
   const client = await pool.connect();
   try {
     const customerId = String(req.body?.customerId ?? '').trim();
+    const companyId = String(req.body?.companyId ?? '').trim();
     const amount = Number(req.body?.amount);
     const method = String(req.body?.method ?? '').trim();
-    if (!/^\d+$/.test(customerId) || !Number.isSafeInteger(amount) || amount <= 0 || !method) {
-      return res.status(400).json({ error: 'A valid customer, positive whole-number amount and payment method are required.' });
+    const paymentMethods = ['MTN Mobile Money', 'Airtel Money', 'Cash', 'Bank transfer', 'Card'];
+    if (!/^\d+$/.test(customerId) || !companyId || !Number.isSafeInteger(amount) || amount <= 0 || !paymentMethods.includes(method)) {
+      return res.status(400).json({ error: 'A valid company, customer, positive whole-number amount and payment method are required.' });
     }
 
     await client.query('BEGIN');
     const customerResult = await client.query(
-      'SELECT id, balance FROM customers WHERE id = $1 FOR UPDATE',
-      [Number(customerId)]
+      'SELECT id, balance FROM customers WHERE id = $1 AND company_id = $2 FOR UPDATE',
+      [Number(customerId), companyId]
     );
     if (!customerResult.rowCount) {
       await client.query('ROLLBACK');
@@ -861,6 +938,164 @@ app.get('/api/companies', async (_req, res) => {
   }
 });
 
+app.get('/api/companies/:companyId/employees', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT e.id::text AS id, e.employee_id AS "employeeId", u.full_name AS name,
+        u.phone, u.email, e.department, e.role, e.status,
+        e.created_at AS "createdAt", u.last_login AS "lastLogin"
+       FROM company_employees e
+       JOIN users u ON u.id = e.user_id
+       WHERE e.company_id = $1
+       ORDER BY e.created_at DESC, e.id DESC`,
+      [req.params.companyId]
+    );
+    return res.json(result.rows);
+  } catch (error) {
+    return res.status(500).json({ error: 'Employees could not be loaded.', details: error.message });
+  }
+});
+
+app.post('/api/companies/:companyId/employees', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { companyId } = req.params;
+    const name = String(req.body?.name ?? '').trim();
+    const phone = String(req.body?.phone ?? '').trim();
+    const email = String(req.body?.email ?? '').trim().toLowerCase();
+    const employeeId = String(req.body?.employeeId ?? '').trim();
+    const department = String(req.body?.department ?? '').trim();
+    const role = String(req.body?.role ?? '').trim();
+    const status = String(req.body?.status ?? 'Active').trim();
+    const password = String(req.body?.password ?? '');
+    const employeeRoles = ['Company Owner / Director', 'Manager', 'Company Admin', 'Operations Dispatcher', 'Supervisor', 'Driver', 'Collection Team', 'Finance / Billing Officer', 'Customer Service Officer', 'Fleet Officer'];
+    if (!name || !phone || !email || !employeeId || !department || !employeeRoles.includes(role) || !['Active', 'Inactive', 'Suspended'].includes(status) || password.length < 8) {
+      return res.status(400).json({ error: 'Complete all employee fields, choose a valid role and use a password of at least 8 characters.' });
+    }
+
+    await client.query('BEGIN');
+    const company = await client.query('SELECT id FROM companies WHERE id = $1', [companyId]);
+    if (!company.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Company was not found.' });
+    }
+    const user = await client.query(
+      `INSERT INTO users (email, password_hash, role, full_name, email_verified, company_id, phone)
+       VALUES ($1, $2, 'company_employee', $3, TRUE, $4, $5) RETURNING id`,
+      [email, hashPassword(password), name, companyId, phone]
+    );
+    const employee = await client.query(
+      `INSERT INTO company_employees (company_id, user_id, employee_id, department, role, status)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id::text AS id, employee_id AS "employeeId", department, role, status, created_at AS "createdAt"`,
+      [companyId, user.rows[0].id, employeeId, department, role, status]
+    );
+    await client.query('COMMIT');
+    return res.status(201).json({ ...employee.rows[0], name, phone, email, lastLogin: null });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    if (error.code === '23505') return res.status(409).json({ error: 'This email or employee ID is already in use.' });
+    return res.status(500).json({ error: 'Employee could not be created.', details: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+app.patch('/api/companies/:companyId/employees/:employeeId', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { companyId, employeeId } = req.params;
+    const name = String(req.body?.name ?? '').trim();
+    const phone = String(req.body?.phone ?? '').trim();
+    const email = String(req.body?.email ?? '').trim().toLowerCase();
+    const department = String(req.body?.department ?? '').trim();
+    const role = String(req.body?.role ?? '').trim();
+    const status = String(req.body?.status ?? '').trim();
+    const employeeRoles = ['Company Owner / Director', 'Manager', 'Company Admin', 'Operations Dispatcher', 'Supervisor', 'Driver', 'Collection Team', 'Finance / Billing Officer', 'Customer Service Officer', 'Fleet Officer'];
+    if (!name || !phone || !email || !department || !employeeRoles.includes(role) || !['Active', 'Inactive', 'Suspended'].includes(status)) {
+      return res.status(400).json({ error: 'Complete all employee fields and choose a valid role and status.' });
+    }
+
+    await client.query('BEGIN');
+    const employee = await client.query(
+      `UPDATE company_employees SET department = $1, role = $2, status = $3
+       WHERE id = $4 AND company_id = $5 RETURNING user_id, employee_id AS "employeeId",
+         id::text AS id, created_at AS "createdAt"`,
+      [department, role, status, employeeId, companyId]
+    );
+    if (!employee.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Employee was not found.' });
+    }
+    await client.query(
+      'UPDATE users SET full_name = $1, phone = $2, email = $3 WHERE id = $4',
+      [name, phone, email, employee.rows[0].user_id]
+    );
+    await client.query('COMMIT');
+    return res.json({ ...employee.rows[0], name, phone, email, department, role, status });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    if (error.code === '23505') return res.status(409).json({ error: 'This email address is already in use.' });
+    return res.status(500).json({ error: 'Employee could not be updated.', details: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+app.get('/api/companies/:companyId/pricing', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id::text AS id, customer_type AS "customerType", amount::double precision AS amount,
+        billing_period AS "billingPeriod", description, active, created_at AS "createdAt"
+       FROM company_pricing_rules WHERE company_id = $1 ORDER BY customer_type, created_at DESC`,
+      [req.params.companyId]
+    );
+    return res.json(result.rows);
+  } catch (error) {
+    return res.status(500).json({ error: 'Pricing rules could not be loaded.', details: error.message });
+  }
+});
+
+app.post('/api/companies/:companyId/pricing', async (req, res) => {
+  try {
+    const { companyId } = req.params;
+    const customerType = String(req.body?.customerType ?? '').trim();
+    const amount = Number(req.body?.amount);
+    const billingPeriod = String(req.body?.billingPeriod ?? '').trim();
+    const description = String(req.body?.description ?? '').trim();
+    if (!['Household', 'Company / Institution'].includes(customerType) || !Number.isFinite(amount) || amount <= 0 || !billingPeriod) {
+      return res.status(400).json({ error: 'Choose a customer type, enter a positive price and set its billing period.' });
+    }
+    const result = await pool.query(
+      `INSERT INTO company_pricing_rules (company_id, customer_type, amount, billing_period, description)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id::text AS id, customer_type AS "customerType", amount::double precision AS amount,
+         billing_period AS "billingPeriod", description, active, created_at AS "createdAt"`,
+      [companyId, customerType, amount, billingPeriod, description || null]
+    );
+    return res.status(201).json(result.rows[0]);
+  } catch (error) {
+    return res.status(500).json({ error: 'Pricing rule could not be created.', details: error.message });
+  }
+});
+
+app.patch('/api/companies/:companyId/pricing/:pricingId', async (req, res) => {
+  try {
+    const { companyId, pricingId } = req.params;
+    const active = Boolean(req.body?.active);
+    const result = await pool.query(
+      `UPDATE company_pricing_rules SET active = $1 WHERE id = $2 AND company_id = $3
+       RETURNING id::text AS id, customer_type AS "customerType", amount::double precision AS amount,
+         billing_period AS "billingPeriod", description, active, created_at AS "createdAt"`,
+      [active, pricingId, companyId]
+    );
+    if (!result.rowCount) return res.status(404).json({ error: 'Pricing rule was not found.' });
+    return res.json(result.rows[0]);
+  } catch (error) {
+    return res.status(500).json({ error: 'Pricing rule could not be updated.', details: error.message });
+  }
+});
+
 app.post('/api/companies', async (req, res) => {
   try {
     const payload = req.body || {};
@@ -923,10 +1158,12 @@ app.post('/api/companies', async (req, res) => {
     );
 
     await pool.query(
-      `INSERT INTO users (email, password_hash, role, full_name, email_verified)
-       VALUES ($1, $2, 'company', $3, TRUE)
-       ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash, role = 'company', full_name = EXCLUDED.full_name`,
-      [email, hashPassword(password), companyName]
+      `INSERT INTO users (email, password_hash, role, full_name, email_verified, company_id, phone)
+       VALUES ($1, $2, 'company', $3, TRUE, $4, $5)
+       ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash,
+         role = 'company', full_name = EXCLUDED.full_name, company_id = EXCLUDED.company_id,
+         phone = EXCLUDED.phone`,
+      [email, hashPassword(password), companyName, companyResult.rows[0].id, phone]
     );
 
     return res.status(201).json({

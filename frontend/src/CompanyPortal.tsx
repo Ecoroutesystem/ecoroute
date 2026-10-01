@@ -1,14 +1,15 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
-import { BarChart3, Bell, Building2, CalendarDays, Camera, ChevronRight, CreditCard, FileText, KeyRound, LayoutDashboard, LogOut, MapPin, Menu, Plus, Receipt, Settings, Truck, Users, Waypoints, X } from 'lucide-react'
+import { BarChart3, Bell, Building2, CalendarDays, Camera, ChevronRight, CreditCard, FileText, KeyRound, LayoutDashboard, LogOut, MapPin, Menu, Pencil, Plus, Receipt, Settings, Truck, Users, Waypoints, X } from 'lucide-react'
 import CompanyCustomersView from './CompanyCustomersView'
 import CompanyCollectionsView from './CompanyCollectionsView'
+import CompanyPricingView from './CompanyPricingView'
 import { CompanyPaymentsView } from './PaymentViews'
 import './App.css'
 
-type CompanyPortalProps = { onLogout: () => void }
+type CompanyPortalProps = { companyId: string; userName: string; userRole: string; onLogout: () => void }
 type Customer = { id: string; name: string; phone?: string; location: string; plan: string; balance: string; status: 'Active' | 'Suspended' | 'Archived' }
 type Collection = { id: string; time: string; date: string; address: string; customer: string; driver: string; vehicle: string; status: 'Scheduled' | 'In Progress' | 'Completed' | 'Missed' | 'Cancelled' }
-const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5001'
+const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
 const navigation = [
   { label: 'Dashboard', icon: LayoutDashboard },
   { label: 'Customers', icon: Users },
@@ -41,13 +42,24 @@ const viewCopy: Record<string, { title: string; subtitle: string }> = {
   Settings: { title: 'Settings', subtitle: 'Configure your company profile and preferences.' },
 }
 
-export default function CompanyPortal({ onLogout }: CompanyPortalProps) {
+export default function CompanyPortal({ companyId, userName, userRole, onLogout }: CompanyPortalProps) {
   const [activeView, setActiveView] = useState('Dashboard')
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const roleViews: Record<string, string[]> = {
+    'Operations Dispatcher': ['Dashboard', 'Collections', 'Routes', 'Customers'],
+    Supervisor: ['Dashboard', 'Collections', 'Routes', 'Customers', 'Staff', 'Reports'],
+    Driver: ['Dashboard', 'Collections', 'Routes'],
+    'Collection Team': ['Dashboard', 'Collections'],
+    'Finance / Billing Officer': ['Dashboard', 'Customers', 'Payments', 'Subscriptions', 'Reports'],
+    'Customer Service Officer': ['Dashboard', 'Customers', 'Notifications'],
+    'Fleet Officer': ['Dashboard', 'Vehicles', 'Users & vehicles'],
+  }
+  const allowedViews = roleViews[userRole]
+  const companyNavigation = allowedViews ? navigation.filter(({ label }) => allowedViews.includes(label)) : navigation
   const current = viewCopy[activeView]
 
   return (
-    <div className="admin-portal">
+    <div className="admin-portal" data-company-id={companyId}>
       <aside className={`admin-sidebar ${mobileMenuOpen ? 'mobile-open' : ''}`}>
         <div className="admin-brand">
           <span className="logo-mark"><Building2 size={17} /></span>
@@ -56,7 +68,7 @@ export default function CompanyPortal({ onLogout }: CompanyPortalProps) {
         </div>
         <p className="portal-label">Company workspace</p>
         <nav className="admin-nav">
-          {navigation.map(({ label, icon: Icon }) => (
+          {companyNavigation.map(({ label, icon: Icon }) => (
             <button key={label} className={activeView === label ? 'active' : ''} onClick={() => { setActiveView(label); setMobileMenuOpen(false) }}>
               <Icon size={17} />
               <span>{label}</span>
@@ -71,7 +83,7 @@ export default function CompanyPortal({ onLogout }: CompanyPortalProps) {
           <div><span className="portal-breadcrumb">Company /</span> {activeView}</div>
           <div className="admin-user">
             <span className="admin-avatar">CO</span>
-            <span><strong>Company User</strong><small>Waste Collection Co.</small></span>
+            <span><strong>{userName}</strong><small>{userRole}</small></span>
           </div>
         </header>
 
@@ -89,13 +101,15 @@ export default function CompanyPortal({ onLogout }: CompanyPortalProps) {
               <CompanyDashboard onOpen={setActiveView} />
             </>
           ) : activeView === 'Customers' ? (
-            <CompanyCustomersView />
+            <CompanyCustomersView companyId={companyId} />
           ) : activeView === 'Collections' ? (
             <CompanyCollectionsView />
           ) : activeView === 'Payments' ? (
-            <CompanyPaymentsView />
+            <CompanyPaymentsView companyId={companyId} />
           ) : activeView === 'Staff' ? (
-            <CompanyStaffView />
+            <CompanyStaffView companyId={companyId} />
+          ) : activeView === 'Subscriptions' ? (
+            <CompanyPricingView companyId={companyId} />
           ) : activeView === 'Vehicles' ? (
             <CompanyVehiclesView />
           ) : activeView === 'Users & vehicles' ? (
@@ -441,46 +455,101 @@ function CompanyVehiclesView() {
   )
 }
 
-type StaffMember = { id: string; name: string; phone: string; position: string; hireDate: string; status: 'Active' | 'On Leave' | 'Inactive' }
+type StaffMember = { id: string; employeeId: string; name: string; phone: string; email: string; department: string; role: string; status: 'Active' | 'Inactive' | 'Suspended'; createdAt: string; lastLogin: string | null }
+type StaffForm = { name: string; phone: string; email: string; employeeId: string; department: string; role: string; status: StaffMember['status']; password: string }
+const employeeRoles = ['Company Owner / Director', 'Manager', 'Company Admin', 'Operations Dispatcher', 'Supervisor', 'Driver', 'Collection Team', 'Finance / Billing Officer', 'Customer Service Officer', 'Fleet Officer']
+const emptyStaffForm: StaffForm = { name: '', phone: '', email: '', employeeId: '', department: '', role: 'Driver', status: 'Active', password: '' }
 
-function CompanyStaffView() {
-  const [staff, setStaff] = useState<StaffMember[]>([
-    { id: 'S-101', name: 'Amina Hassan', phone: '+254 721 440 290', position: 'Operations Manager', hireDate: '2024-02-14', status: 'Active' },
-    { id: 'S-102', name: 'David Otieno', phone: '+254 712 998 211', position: 'Driver', hireDate: '2023-11-05', status: 'On Leave' },
-    { id: 'S-103', name: 'Grace Njeri', phone: '+254 734 220 304', position: 'Collections Supervisor', hireDate: '2024-01-22', status: 'Active' },
-  ])
+function CompanyStaffView({ companyId }: { companyId: string }) {
+  const [staff, setStaff] = useState<StaffMember[]>([])
   const [showAddForm, setShowAddForm] = useState(false)
-  const [name, setName] = useState('')
-  const [phone, setPhone] = useState('')
-  const [position, setPosition] = useState('Driver')
-  const [hireDate, setHireDate] = useState('')
-  const [status, setStatus] = useState<'Active' | 'On Leave' | 'Inactive'>('Active')
+  const [editingStaff, setEditingStaff] = useState<StaffMember | null>(null)
+  const [form, setForm] = useState<StaffForm>(emptyStaffForm)
+  const [loading, setLoading] = useState(true)
+  const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!name.trim() || !phone.trim() || !position.trim() || !hireDate) {
-      setError('Please complete all staff fields.')
-      return
-    }
-
-    const member: StaffMember = {
-      id: `S-${String(staff.length + 101)}`,
-      name: name.trim(),
-      phone: phone.trim(),
-      position: position.trim(),
-      hireDate,
-      status,
-    }
-
-    setStaff((current) => [member, ...current])
-    setName('')
-    setPhone('')
-    setPosition('Driver')
-    setHireDate('')
-    setStatus('Active')
+  const loadStaff = async () => {
+    if (!companyId) { setError('This company login is not linked to a company record.'); setLoading(false); return }
+    setLoading(true)
     setError('')
-    setShowAddForm(false)
+    try {
+      const response = await fetch(`${apiBase}/api/companies/${encodeURIComponent(companyId)}/employees`)
+      const result = await response.json() as StaffMember[] | { error?: string }
+      if (!response.ok) throw new Error('error' in result ? result.error : 'Employee records could not be loaded.')
+      setStaff(result as StaffMember[])
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Employee records could not be loaded.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    let active = true
+    if (!companyId) {
+      setError('This company login is not linked to a company record.')
+      setLoading(false)
+      return () => { active = false }
+    }
+    void fetch(`${apiBase}/api/companies/${encodeURIComponent(companyId)}/employees`)
+      .then(async (response) => {
+        const result = await response.json() as StaffMember[] | { error?: string }
+        if (!response.ok) throw new Error('error' in result ? result.error : 'Employee records could not be loaded.')
+        if (active) setStaff(result as StaffMember[])
+      })
+      .catch((requestError: unknown) => { if (active) setError(requestError instanceof Error ? requestError.message : 'Employee records could not be loaded.') })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [companyId])
+
+  const openCreateForm = () => { setEditingStaff(null); setForm(emptyStaffForm); setError(''); setShowAddForm(true) }
+  const openEditForm = (member: StaffMember) => {
+    setEditingStaff(member)
+    setForm({ name: member.name, phone: member.phone, email: member.email, employeeId: member.employeeId, department: member.department, role: member.role, status: member.status, password: '' })
+    setError('')
+    setShowAddForm(true)
+  }
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!companyId) return setError('This company login is not linked to a company record.')
+    if (!editingStaff && form.password.length < 8) return setError('Set an initial password with at least 8 characters.')
+    setSubmitting(true)
+    setError('')
+    setNotice('')
+    try {
+      const response = await fetch(`${apiBase}/api/companies/${encodeURIComponent(companyId)}/employees${editingStaff ? `/${editingStaff.id}` : ''}`, {
+        method: editingStaff ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...form, employeeId: form.employeeId.trim() }),
+      })
+      const result = await response.json() as StaffMember | { error?: string }
+      if (!response.ok) throw new Error('error' in result ? result.error : 'Employee could not be saved.')
+      setNotice(editingStaff ? 'Employee details updated.' : 'Employee account created. Share the initial password securely.')
+      setShowAddForm(false)
+      await loadStaff()
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Employee could not be saved.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const updateStatus = async (member: StaffMember, status: StaffMember['status']) => {
+    try {
+      const response = await fetch(`${apiBase}/api/companies/${encodeURIComponent(companyId)}/employees/${member.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...member, status }),
+      })
+      const result = await response.json() as StaffMember | { error?: string }
+      if (!response.ok) throw new Error('error' in result ? result.error : 'Employee status could not be updated.')
+      setStaff((current) => current.map((item) => item.id === member.id ? result as StaffMember : item))
+      setError('')
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Employee status could not be updated.')
+    }
   }
 
   return (
@@ -488,34 +557,35 @@ function CompanyStaffView() {
       <div className="admin-heading">
         <div>
           <p className="section-kicker"><span className="kicker-line" /> TEAM MANAGEMENT</p>
-          <h1>Staff</h1>
-          <p>Keep your team details organized and monitor current staffing status.</p>
+          <h1>Employees</h1>
+          <p>Create company accounts and assign a role to each employee.</p>
         </div>
-        <button className="admin-action" onClick={() => setShowAddForm(true)}><Plus size={14} /> Add staff</button>
+        <button className="admin-action" onClick={openCreateForm}><Plus size={14} /> Add employee</button>
       </div>
 
       {error && <p className="settings-error company-error">{error}</p>}
+      {notice && <p className="payment-notice">{notice}</p>}
 
       <section className="company-stats">
         <div className="company-stat green">
           <small>Total staff</small>
-          <strong>{staff.length}</strong>
-          <span>Team size</span>
+          <strong>{loading ? '...' : staff.length}</strong>
+          <span>Company accounts</span>
         </div>
         <div className="company-stat blue">
           <small>Active</small>
-          <strong>{staff.filter((member) => member.status === 'Active').length}</strong>
-          <span>Available</span>
+          <strong>{loading ? '...' : staff.filter((member) => member.status === 'Active').length}</strong>
+          <span>Access enabled</span>
         </div>
         <div className="company-stat yellow">
-          <small>On leave</small>
-          <strong>{staff.filter((member) => member.status === 'On Leave').length}</strong>
-          <span>Temporary off</span>
+          <small>Inactive</small>
+          <strong>{loading ? '...' : staff.filter((member) => member.status === 'Inactive').length}</strong>
+          <span>Access disabled</span>
         </div>
         <div className="company-stat coral">
           <small>Inactive</small>
-          <strong>{staff.filter((member) => member.status === 'Inactive').length}</strong>
-          <span>Not active</span>
+          <strong>{loading ? '...' : staff.filter((member) => member.status === 'Suspended').length}</strong>
+          <span>Suspended accounts</span>
         </div>
       </section>
 
@@ -523,12 +593,15 @@ function CompanyStaffView() {
         <div className="admin-panel-heading">
           <div>
             <h2>Staff roster</h2>
-            <p>Contact details, job role, hire date and employment status.</p>
+            <p>Contact, assigned role, access status and account activity.</p>
           </div>
+          <button onClick={() => void loadStaff()}><ChevronRight size={14} /> Refresh</button>
         </div>
 
-        {staff.length === 0 ? (
-          <p className="company-loading">No staff added yet.</p>
+        {loading ? (
+          <p className="company-loading">Loading employees...</p>
+        ) : staff.length === 0 ? (
+          <p className="company-loading">No employees added yet.</p>
         ) : (
           staff.map((member) => (
             <div className="staff-row" key={member.id}>
@@ -537,10 +610,11 @@ function CompanyStaffView() {
               </div>
               <div className="staff-main">
                 <strong>{member.name}</strong>
-                <small>{member.position} · {member.phone}</small>
+                <small>{member.role} · {member.department} · {member.phone}</small>
               </div>
-              <div className="staff-meta"><span>{member.hireDate}</span></div>
-              <span className={`staff-status ${member.status === 'Active' ? 'active' : member.status === 'On Leave' ? 'leave' : 'inactive'}`}>{member.status}</span>
+              <div className="staff-meta"><span>{member.employeeId} · {member.email}</span><small>Last login: {member.lastLogin ? new Date(member.lastLogin).toLocaleString() : 'Never'}</small></div>
+              <span className={`staff-status ${member.status === 'Active' ? 'active' : member.status === 'Suspended' ? 'leave' : 'inactive'}`}>{member.status}</span>
+              <div className="company-actions"><button className="view-action" onClick={() => openEditForm(member)}><Pencil size={13} /> Edit</button>{member.status !== 'Active' && <button className="approve-action" onClick={() => void updateStatus(member, 'Active')}>Activate</button>}{member.status !== 'Inactive' && <button className="cancel-action" onClick={() => void updateStatus(member, 'Inactive')}>Deactivate</button>}{member.status !== 'Suspended' && <button className="delete-action" onClick={() => void updateStatus(member, 'Suspended')}>Suspend</button>}</div>
             </div>
           ))
         )}
@@ -552,7 +626,7 @@ function CompanyStaffView() {
             <div className="company-modal-header">
               <div>
                 <p className="section-kicker"><span className="kicker-line" /> TEAM</p>
-                <h2>Add staff</h2>
+                <h2>{editingStaff ? 'Edit employee' : 'Add employee'}</h2>
               </div>
               <button className="company-modal-close" onClick={() => setShowAddForm(false)}><X size={16} /></button>
             </div>
@@ -560,36 +634,48 @@ function CompanyStaffView() {
             <form onSubmit={handleSubmit} className="company-form">
               <label>
                 Full name
-                <input type="text" value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Jane Doe" />
+                <input required type="text" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="e.g. Jane Doe" />
               </label>
 
               <label>
                 Phone number
-                <input type="tel" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="e.g. +254 712 000 111" />
+                <input required type="tel" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} placeholder="e.g. +250 788 000 111" />
               </label>
 
               <label>
-                Position
-                <input type="text" value={position} onChange={(event) => setPosition(event.target.value)} placeholder="e.g. Driver" />
+                Email address
+                <input required type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} placeholder="employee@company.rw" />
               </label>
 
               <label>
-                Hire date
-                <input type="date" value={hireDate} onChange={(event) => setHireDate(event.target.value)} />
+                Employee ID
+                <input required type="text" value={form.employeeId} onChange={(event) => setForm({ ...form, employeeId: event.target.value })} placeholder="e.g. EMP-001" />
+              </label>
+
+              <label>
+                Department
+                <input required type="text" value={form.department} onChange={(event) => setForm({ ...form, department: event.target.value })} placeholder="e.g. Operations" />
+              </label>
+
+              <label>
+                Employee role
+                <select value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}>
+                  {employeeRoles.map((role) => <option key={role}>{role}</option>)}
+                </select>
               </label>
 
               <label>
                 Status
-                <select value={status} onChange={(event) => setStatus(event.target.value as 'Active' | 'On Leave' | 'Inactive')}>
-                  <option value="Active">Active</option>
-                  <option value="On Leave">On Leave</option>
-                  <option value="Inactive">Inactive</option>
+                <select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value as StaffMember['status'] })}>
+                  <option>Active</option><option>Inactive</option><option>Suspended</option>
                 </select>
               </label>
 
+              {!editingStaff && <label>Initial password<input required type="password" minLength={8} autoComplete="new-password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} placeholder="At least 8 characters" /></label>}
+
               <div className="company-form-actions">
                 <button type="button" className="secondary-button" onClick={() => setShowAddForm(false)}>Cancel</button>
-                <button type="submit" className="admin-save">Save staff</button>
+                <button type="submit" className="admin-save" disabled={submitting}>{submitting ? 'Saving...' : editingStaff ? 'Save changes' : 'Create employee'}</button>
               </div>
             </form>
           </section>

@@ -52,12 +52,13 @@ function App() {
   const [adminPortal, setAdminPortal] = useState(false)
   const [adminToken, setAdminToken] = useState('')
   const [companyPortal, setCompanyPortal] = useState(false)
+  const [companyContext, setCompanyContext] = useState<{ id: string; name: string; role: string }>({ id: '', name: 'Company User', role: 'Manager' })
   const [customerRegister, setCustomerRegister] = useState(false)
   const [authError, setAuthError] = useState('')
   const [forgotPassword, setForgotPassword] = useState(false)
   const openDialog = (next: Exclude<Dialog, null>) => { setDialog(next); setSubmitted(false); setForgotPassword(false); setAuthError(''); setMobileOpen(false) }
   const closeDialog = () => setDialog(null)
-  const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5001'
+  const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
   const googleSignIn = async (credential?: string) => {
     if (!credential) { setAuthError('Google verification is unavailable until a Google client ID is configured.'); return }
     const response = await fetch(`${apiBase}/api/auth/google`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ credential }) })
@@ -74,7 +75,7 @@ function App() {
       if (forgotPassword) { setAuthError('Password reset is handled by the backend administrator.'); setSubmitted(true); return }
       const password = String(form.get('password') ?? '')
       let response: Response
-      let result: { error?: string; user?: { role?: string; customerId?: string }; adminToken?: string }
+      let result: { error?: string; user?: { role?: string; customerId?: string; companyId?: string; employeeRole?: string; full_name?: string }; adminToken?: string }
       try {
         response = await fetch(`${apiBase}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) })
         result = await response.json() as typeof result
@@ -87,7 +88,14 @@ function App() {
       setAuthError('')
       setDialog(null)
       if (email === adminEmail || role === 'admin') { setAdminToken(result.adminToken ?? ''); setAdminPortal(true) }
-      else if (role === 'company') setCompanyPortal(true)
+      else if (role === 'company' || role === 'company_employee') {
+        setCompanyContext({
+          id: result.user?.companyId ?? '',
+          name: result.user?.full_name ?? 'Company User',
+          role: result.user?.employeeRole ?? 'Company Admin',
+        })
+        setCompanyPortal(true)
+      }
       else { setCustomerId(result.user?.customerId ?? ''); setCustomerPortal(true) }
       return
     }
@@ -120,7 +128,7 @@ function App() {
   }
 
   if (adminPortal) return <AdminPortal email={adminEmail} token={adminToken} onLogout={() => { setAdminPortal(false); setAdminToken('') }} />
-  if (companyPortal) return <CompanyPortal onLogout={() => setCompanyPortal(false)} />
+  if (companyPortal) return <CompanyPortal companyId={companyContext.id} userName={companyContext.name} userRole={companyContext.role} onLogout={() => setCompanyPortal(false)} />
   if (customerPortal) return <CustomerPortal customerId={customerId} onLogout={() => { setCustomerPortal(false); setCustomerId('') }} />
   return <div className="landing-page">
     <header className="site-header"><a href="#top" className="site-logo" aria-label="EcoRoute home"><span className="logo-mark"><Leaf size={19} /></span><span><strong>Isuku Route</strong><small>AI-Powered EcoRoute</small></span></a><button className="mobile-toggle" onClick={() => setMobileOpen(!mobileOpen)} aria-label="Toggle navigation">{mobileOpen ? <X size={22} /> : <Menu size={22} />}</button><nav className={mobileOpen ? 'site-nav nav-open' : 'site-nav'}>{['How It Works', 'Features', 'For Companies', 'For Customers', 'About', 'Contact'].map((label) => <a key={label} href={`#${label.toLowerCase().replaceAll(' ', '-')}`} onClick={() => setMobileOpen(false)}>{label}</a>)}<div className="nav-actions"><button className="signin-link" onClick={() => openDialog('signin')}>Sign In</button><button className="header-cta" onClick={() => openDialog('register')}>Register Company <ArrowRight size={15} /></button></div></nav></header>
