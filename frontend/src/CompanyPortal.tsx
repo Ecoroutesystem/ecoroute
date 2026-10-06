@@ -63,6 +63,22 @@ export default function CompanyPortal({ companyId, userName, userRole, onLogout 
   const companyNavigation = allowedViews ? navigation.filter(({ label }) => allowedViews.includes(label)) : navigation
   const current = viewCopy[activeView]
 
+  useEffect(() => {
+    if (!mobileMenuOpen) return
+
+    const previousOverflow = document.body.style.overflow
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileMenuOpen(false)
+    }
+
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [mobileMenuOpen])
+
   return (
     <div className="admin-portal" data-company-id={companyId}>
       <aside className={`admin-sidebar ${mobileMenuOpen ? 'mobile-open' : ''}`}>
@@ -82,6 +98,7 @@ export default function CompanyPortal({ companyId, userName, userRole, onLogout 
         </nav>
         <button className="admin-logout" onClick={onLogout}><LogOut size={17} /> Logout</button>
       </aside>
+      {mobileMenuOpen && <button className="admin-sidebar-backdrop" aria-label="Close navigation" onClick={() => setMobileMenuOpen(false)} />}
 
       <main className="admin-main">
         <header className="admin-topbar">
@@ -187,7 +204,7 @@ function CompanyDashboard({ companyId, onOpen }: { companyId: string; onOpen: (v
     }
 
     void loadData()
-  }, [])
+  }, [companyId])
 
   const totalCustomers = customers.length
   const activeCustomers = customers.filter((customer) => customer.status === 'Active').length

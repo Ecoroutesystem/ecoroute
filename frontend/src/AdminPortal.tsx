@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Bot, Building2, Check, ChevronRight, FileText, KeyRound, LayoutDashboard, LogOut, Menu, Settings, ShieldCheck, Smartphone, X } from 'lucide-react'
 import CompaniesView from './CompaniesView'
 import AdminDashboard from './AdminDashboard'
@@ -19,7 +19,61 @@ export default function AdminPortal({ email, token, onLogout }: AdminPortalProps
   const [activeView, setActiveView] = useState('Dashboard')
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const avatar = 'AD'
-  return <div className="admin-portal"><aside className={`admin-sidebar ${mobileMenuOpen ? 'mobile-open' : ''}`}><div className="admin-brand"><span className="logo-mark"><ShieldCheck size={17} /></span><span><strong>EcoRoute</strong><small>System administration</small></span><button className="mobile-menu-toggle" onClick={() => setMobileMenuOpen((open) => !open)} aria-label={mobileMenuOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={mobileMenuOpen}><span>{mobileMenuOpen ? 'Close' : 'Menu'}</span>{mobileMenuOpen ? <X size={18} /> : <Menu size={18} />}</button></div><p className="portal-label">Admin workspace</p><nav className="admin-nav">{navigation.map(({ label, icon: Icon }) => <button key={label} className={activeView === label ? 'active' : ''} onClick={() => { setActiveView(label); setMobileMenuOpen(false) }}><Icon size={17} /><span>{label}</span>{label === 'Companies' && <i>2</i>}</button>)}</nav><button className="admin-logout" onClick={onLogout}><LogOut size={17} /> Logout</button></aside><main className="admin-main"><header className="admin-topbar"><div><span className="portal-breadcrumb">Admin /</span> {activeView}</div><div className="admin-user"><span className="admin-avatar">{avatar}</span><span><strong>System Administrator</strong><small>{email}</small></span></div></header><div className="admin-content">{activeView === 'Dashboard' ? <AdminDashboard token={token} onOpen={setActiveView} /> : activeView === 'Companies' ? <CompaniesView token={token} /> : activeView === 'AI Assistant' ? <AdminAssistant token={token} /> : activeView === 'Settings' ? <SettingsView email={email} /> : <AdminView title={activeView} onLogout={onLogout} />}</div></main></div>
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return
+
+    const previousOverflow = document.body.style.overflow
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileMenuOpen(false)
+    }
+
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [mobileMenuOpen])
+
+  return (
+    <div className="admin-portal">
+      <aside className={`admin-sidebar ${mobileMenuOpen ? 'mobile-open' : ''}`}>
+        <div className="admin-brand">
+          <span className="logo-mark"><ShieldCheck size={17} /></span>
+          <span><strong>EcoRoute</strong><small>System administration</small></span>
+          <button className="mobile-menu-toggle" onClick={() => setMobileMenuOpen((open) => !open)} aria-label={mobileMenuOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={mobileMenuOpen}>
+            <span>{mobileMenuOpen ? 'Close' : 'Menu'}</span>
+            {mobileMenuOpen ? <X size={18} /> : <Menu size={18} />}
+          </button>
+        </div>
+        <p className="portal-label">Admin workspace</p>
+        <nav className="admin-nav">
+          {navigation.map(({ label, icon: Icon }) => (
+            <button key={label} className={activeView === label ? 'active' : ''} onClick={() => { setActiveView(label); setMobileMenuOpen(false) }}>
+              <Icon size={17} />
+              <span>{label}</span>
+              {label === 'Companies' && <i>2</i>}
+            </button>
+          ))}
+        </nav>
+        <button className="admin-logout" onClick={onLogout}><LogOut size={17} /> Logout</button>
+      </aside>
+      {mobileMenuOpen && <button className="admin-sidebar-backdrop" aria-label="Close navigation" onClick={() => setMobileMenuOpen(false)} />}
+      <main className="admin-main">
+        <header className="admin-topbar">
+          <div><span className="portal-breadcrumb">Admin /</span> {activeView}</div>
+          <div className="admin-user">
+            <span className="admin-avatar">{avatar}</span>
+            <span><strong>System Administrator</strong><small>{email}</small></span>
+          </div>
+        </header>
+        <div className="admin-content">
+          {activeView === 'Dashboard' ? <AdminDashboard token={token} onOpen={setActiveView} /> : activeView === 'Companies' ? <CompaniesView token={token} /> : activeView === 'AI Assistant' ? <AdminAssistant token={token} /> : activeView === 'Settings' ? <SettingsView email={email} /> : <AdminView title={activeView} onLogout={onLogout} />}
+        </div>
+      </main>
+    </div>
+  )
 }
 
 function SettingsView({ email }: { email: string }) {
