@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { ArrowDownLeft, ArrowUpRight, CalendarDays, Check, CreditCard, Download, FileCheck2, Plus, Printer, Search, X } from 'lucide-react'
+import { companyFetch } from './companyApi'
 import './App.css'
 
 type Customer = { id: string; name: string; phone?: string; location: string; plan: string; balance: string; status: string }
@@ -11,8 +12,8 @@ const formatDate = (value: string) => new Date(value).toLocaleDateString('en-US'
 
 async function fetchCompanyPaymentData(companyId: string) {
   const [customersResponse, paymentsResponse] = await Promise.all([
-    fetch(`${apiBase}/api/customers?companyId=${encodeURIComponent(companyId)}`),
-    fetch(`${apiBase}/api/payments?companyId=${encodeURIComponent(companyId)}`),
+    companyFetch(`/api/customers?companyId=${encodeURIComponent(companyId)}`),
+    companyFetch(`/api/payments?companyId=${encodeURIComponent(companyId)}`),
   ])
   const [customerData, paymentData] = await Promise.all([
     customersResponse.json() as Promise<Customer[] | { error?: string }>,
@@ -114,7 +115,7 @@ function RecordPaymentDialog({ companyId, customers, onClose, onSaved }: { compa
     setSubmitting(true)
     setError('')
     try {
-      const response = await fetch(`${apiBase}/api/payments`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerId, companyId, amount: value, method }) })
+      const response = await companyFetch('/api/payments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerId, companyId, amount: value, method }) })
       const result = await response.json() as { error?: string }
       if (!response.ok) throw new Error(result.error || 'Payment could not be recorded')
       await onSaved()

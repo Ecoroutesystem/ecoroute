@@ -6,7 +6,7 @@ type CompanyStatus = 'Approved' | 'Pending approval' | 'Cancelled'
 type Company = { id: string; name: string; email?: string; phone?: string; address?: string; tin?: string; registration?: string; location: string; status: CompanyStatus }
 const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
 
-export default function CompaniesView() {
+export default function CompaniesView({ token }: { token: string }) {
   const [companies, setCompanies] = useState<Company[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -16,7 +16,7 @@ export default function CompaniesView() {
     setLoading(true)
     setError('')
     try {
-      const response = await fetch(`${apiBase}/api/companies`)
+      const response = await fetch(`${apiBase}/api/companies`, { headers: { Authorization: `Bearer ${token}` } })
       const result = await response.json() as Company[] | { error?: string }
       if (!response.ok) throw new Error('error' in result ? result.error : 'Companies could not be loaded')
       setCompanies(result as Company[])
@@ -27,12 +27,12 @@ export default function CompaniesView() {
     }
   }
 
-  useEffect(() => { void loadCompanies() }, [])
+  useEffect(() => { void loadCompanies() }, [token])
 
   const updateStatus = async (company: Company, action: 'approve' | 'cancel') => {
     setError('')
     try {
-      const response = await fetch(`${apiBase}/api/companies/${company.id}/${action}`, { method: 'PATCH' })
+      const response = await fetch(`${apiBase}/api/companies/${company.id}/${action}`, { method: 'PATCH', headers: { Authorization: `Bearer ${token}` } })
       const result = await response.json() as Company | { error?: string }
       if (!response.ok) throw new Error('error' in result ? result.error : 'Company status could not be updated')
       setCompanies((items) => items.map((item) => item.id === company.id ? result as Company : item))
@@ -45,7 +45,7 @@ export default function CompaniesView() {
     if (!window.confirm(`Delete ${company.name}? This cannot be undone.`)) return
     setError('')
     try {
-      const response = await fetch(`${apiBase}/api/companies/${company.id}`, { method: 'DELETE' })
+      const response = await fetch(`${apiBase}/api/companies/${company.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
       const result = await response.json() as { error?: string }
       if (!response.ok) throw new Error(result.error ?? 'Company could not be deleted')
       setCompanies((items) => items.filter((item) => item.id !== company.id))

@@ -1,13 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Check, ChevronRight, Eye, Plus, Trash2, X } from 'lucide-react'
+import { companyFetch } from './companyApi'
 import './App.css'
 
 type CustomerStatus = 'Active' | 'Suspended' | 'Archived'
 type Customer = { id: string; name: string; phone?: string; location: string; plan: string; balance: string; status: CustomerStatus; customerType?: string }
-const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
-
 async function fetchCustomers(companyId: string): Promise<Customer[]> {
-  const response = await fetch(`${apiBase}/api/customers?companyId=${encodeURIComponent(companyId)}`)
+  const response = await companyFetch(`/api/customers?companyId=${encodeURIComponent(companyId)}`)
   const result = await response.json() as Customer[] | { error?: string }
   if (!response.ok) throw new Error('error' in result ? result.error : 'Customers could not be loaded')
   return result as Customer[]
@@ -46,7 +45,7 @@ export default function CompanyCustomersView({ companyId }: { companyId: string 
   const updateStatus = async (customer: Customer, status: CustomerStatus) => {
     setError('')
     try {
-      const response = await fetch(`${apiBase}/api/customers/${customer.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status, companyId }) })
+      const response = await companyFetch(`/api/customers/${customer.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status, companyId }) })
       const result = await response.json() as Customer | { error?: string }
       if (!response.ok) throw new Error('error' in result ? result.error : 'Customer status could not be updated')
       setCustomers((items) => items.map((item) => item.id === customer.id ? result as Customer : item))
@@ -59,7 +58,7 @@ export default function CompanyCustomersView({ companyId }: { companyId: string 
     if (!window.confirm(`Delete ${customer.name}? This cannot be undone.`)) return
     setError('')
     try {
-      const response = await fetch(`${apiBase}/api/customers/${customer.id}?companyId=${encodeURIComponent(companyId)}`, { method: 'DELETE' })
+      const response = await companyFetch(`/api/customers/${customer.id}?companyId=${encodeURIComponent(companyId)}`, { method: 'DELETE' })
       const result = await response.json() as { error?: string }
       if (!response.ok) throw new Error(result.error ?? 'Customer could not be deleted')
       setCustomers((items) => items.filter((item) => item.id !== customer.id))
@@ -91,7 +90,6 @@ function AddCustomerForm({ companyId, onClose, onSuccess }: { companyId: string;
   const [plan, setPlan] = useState('Weekly · 240 kg')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -99,7 +97,7 @@ function AddCustomerForm({ companyId, onClose, onSuccess }: { companyId: string;
     setSubmitting(true)
     setError('')
     try {
-      const response = await fetch(`${apiBase}/api/customers`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, phone, location, plan, companyId, customerType }) })
+      const response = await companyFetch('/api/customers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, phone, location, plan, companyId, customerType }) })
       const result = await response.json() as Customer | { error?: string }
       if (!response.ok) throw new Error('error' in result ? result.error : 'Customer could not be created')
       onSuccess()

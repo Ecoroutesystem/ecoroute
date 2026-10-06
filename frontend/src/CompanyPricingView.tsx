@@ -1,10 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Check, Plus } from 'lucide-react'
+import { companyFetch } from './companyApi'
 import './App.css'
 
 type CustomerType = 'Household' | 'Company / Institution'
 type PricingRule = { id: string; customerType: CustomerType; amount: number; billingPeriod: string; description: string | null; active: boolean; createdAt: string }
-const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
 const money = new Intl.NumberFormat('en-RW', { maximumFractionDigits: 0 })
 
 export default function CompanyPricingView({ companyId }: { companyId: string }) {
@@ -20,7 +20,7 @@ export default function CompanyPricingView({ companyId }: { companyId: string })
 
   useEffect(() => {
     let active = true
-    void fetch(`${apiBase}/api/companies/${encodeURIComponent(companyId)}/pricing`)
+    void companyFetch(`/api/companies/${encodeURIComponent(companyId)}/pricing`)
       .then(async (response) => {
         const result = await response.json() as PricingRule[] | { error?: string }
         if (!response.ok) throw new Error('error' in result ? result.error : 'Pricing rules could not be loaded.')
@@ -37,7 +37,7 @@ export default function CompanyPricingView({ companyId }: { companyId: string })
     setError('')
     setNotice('')
     try {
-      const response = await fetch(`${apiBase}/api/companies/${encodeURIComponent(companyId)}/pricing`, {
+      const response = await companyFetch(`/api/companies/${encodeURIComponent(companyId)}/pricing`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ customerType, amount: Number(amount), billingPeriod, description }),
@@ -58,7 +58,7 @@ export default function CompanyPricingView({ companyId }: { companyId: string })
   const toggleRule = async (rule: PricingRule) => {
     setError('')
     try {
-      const response = await fetch(`${apiBase}/api/companies/${encodeURIComponent(companyId)}/pricing/${rule.id}`, {
+      const response = await companyFetch(`/api/companies/${encodeURIComponent(companyId)}/pricing/${rule.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: !rule.active }),
       })
       const result = await response.json() as PricingRule | { error?: string }

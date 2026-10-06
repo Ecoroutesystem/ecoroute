@@ -8,6 +8,24 @@ import { rwandaLocations } from './rwanda-locations.ts'
 import './App.css'
 
 type Dialog = 'register' | 'signin' | null
+type PersistedSession =
+  | { role: 'admin'; token: string }
+  | { role: 'company'; token: string; company: { id: string; name: string; role: string } }
+  | { role: 'customer'; customerId: string }
+
+function readPersistedSession(): PersistedSession | null {
+  try {
+    const value = sessionStorage.getItem('authSession')
+    if (!value) return null
+    const session = JSON.parse(value) as PersistedSession
+    if (session.role === 'company' && session.token) sessionStorage.setItem('companyToken', session.token)
+    return session
+  } catch {
+    sessionStorage.removeItem('authSession')
+    return null
+  }
+}
+
 type GoogleIdentity = { accounts: { id: { initialize: (options: { client_id: string; callback: (response: { credential: string }) => void }) => void; renderButton: (element: HTMLElement, options: { theme: string; size: string; width: number }) => void } } }
 declare global { interface Window { google?: GoogleIdentity } }
 const adminEmail = (import.meta.env.VITE_ADMIN_EMAIL as string | undefined)?.toLowerCase() ?? 'diope2diope@gmail.com'
@@ -44,18 +62,39 @@ const problems = [
 ]
 
 function App() {
+  const [savedSession] = useState(readPersistedSession)
   const [dialog, setDialog] = useState<Dialog>(null)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [submitted, setSubmitted] = useState(false)
-  const [customerPortal, setCustomerPortal] = useState(false)
-  const [customerId, setCustomerId] = useState('')
-  const [adminPortal, setAdminPortal] = useState(false)
-  const [adminToken, setAdminToken] = useState('')
-  const [companyPortal, setCompanyPortal] = useState(false)
-  const [companyContext, setCompanyContext] = useState<{ id: string; name: string; role: string }>({ id: '', name: 'Company User', role: 'Manager' })
+  const [customerPortal, setCustomerPortal] = useState(savedSession?.role === 'customer')
+  const [customerId, setCustomerId] = useState(savedSession?.role === 'customer' ? savedSession.customerId : '')
+  const [adminPortal, setAdminPortal] = useState(savedSession?.role === 'admin')
+  const [adminToken, setAdminToken] = useState(savedSession?.role === 'admin' ? savedSession.token : '')
+  const [companyPortal, setCompanyPortal] = useState(savedSession?.role === 'company')
+  const [companyContext, setCompanyContext] = useState<{ id: string; name: string; role: string }>(
+    savedSession?.role === 'company' ? savedSession.company : { id: '', name: 'Company User', role: 'Manager' },
+  )
   const [customerRegister, setCustomerRegister] = useState(false)
   const [authError, setAuthError] = useState('')
   const [forgotPassword, setForgotPassword] = useState(false)
+  useEffect(() => {
+    if (adminPortal) {
+      sessionStorage.setItem('authSession', JSON.stringify({ role: 'admin', token: adminToken }))
+      sessionStorage.removeItem('companyToken')
+    } else if (companyPortal) {
+      sessionStorage.setItem('authSession', JSON.stringify({
+        role: 'company',
+        token: sessionStorage.getItem('companyToken') ?? '',
+        company: companyContext,
+      }))
+    } else if (customerPortal) {
+      sessionStorage.setItem('authSession', JSON.stringify({ role: 'customer', customerId }))
+      sessionStorage.removeItem('companyToken')
+    } else {
+      sessionStorage.removeItem('authSession')
+      sessionStorage.removeItem('companyToken')
+    }
+  }, [adminPortal, adminToken, companyPortal, companyContext, customerPortal, customerId])
   const openDialog = (next: Exclude<Dialog, null>) => { setDialog(next); setSubmitted(false); setForgotPassword(false); setAuthError(''); setMobileOpen(false) }
   const closeDialog = () => setDialog(null)
   const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
@@ -75,7 +114,7 @@ function App() {
       if (forgotPassword) { setAuthError('Password reset is handled by the backend administrator.'); setSubmitted(true); return }
       const password = String(form.get('password') ?? '')
       let response: Response
-      let result: { error?: string; user?: { role?: string; customerId?: string; companyId?: string; employeeRole?: string; full_name?: string }; adminToken?: string }
+      let result: { error?: string; user?: { role?: string; customerId?: string; companyId?: string; employeeRole?: string; full_name?: string }; adminToken?: string; companyToken?: string }
       try {
         response = await fetch(`${apiBase}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) })
         result = await response.json() as typeof result
@@ -87,8 +126,9 @@ function App() {
       const role = String(result.user?.role ?? '').toLowerCase()
       setAuthError('')
       setDialog(null)
-      if (email === adminEmail || role === 'admin') { setAdminToken(result.adminToken ?? ''); setAdminPortal(true) }
+      if (email === adminEmail || role === 'admin') { sessionStorage.removeItem('companyToken'); setAdminToken(result.adminToken ?? ''); setAdminPortal(true) }
       else if (role === 'company' || role === 'company_employee') {
+        if (result.companyToken) sessionStorage.setItem('companyToken', result.companyToken)
         setCompanyContext({
           id: result.user?.companyId ?? '',
           name: result.user?.full_name ?? 'Company User',
@@ -96,7 +136,7 @@ function App() {
         })
         setCompanyPortal(true)
       }
-      else { setCustomerId(result.user?.customerId ?? ''); setCustomerPortal(true) }
+      else { sessionStorage.removeItem('companyToken'); setCustomerId(result.user?.customerId ?? ''); setCustomerPortal(true) }
       return
     }
     const password = String(form.get('password') ?? '')
@@ -127,9 +167,9 @@ function App() {
     }
   }
 
-  if (adminPortal) return <AdminPortal email={adminEmail} token={adminToken} onLogout={() => { setAdminPortal(false); setAdminToken('') }} />
-  if (companyPortal) return <CompanyPortal companyId={companyContext.id} userName={companyContext.name} userRole={companyContext.role} onLogout={() => setCompanyPortal(false)} />
-  if (customerPortal) return <CustomerPortal customerId={customerId} onLogout={() => { setCustomerPortal(false); setCustomerId('') }} />
+  if (adminPortal) return <AdminPortal email={adminEmail} token={adminToken} onLogout={() => { sessionStorage.removeItem('authSession'); setAdminPortal(false); setAdminToken('') }} />
+  if (companyPortal) return <CompanyPortal companyId={companyContext.id} userName={companyContext.name} userRole={companyContext.role} onLogout={() => { sessionStorage.removeItem('authSession'); sessionStorage.removeItem('companyToken'); setCompanyPortal(false) }} />
+  if (customerPortal) return <CustomerPortal customerId={customerId} onLogout={() => { sessionStorage.removeItem('authSession'); setCustomerPortal(false); setCustomerId('') }} />
   return <div className="landing-page">
     <header className="site-header"><a href="#top" className="site-logo" aria-label="EcoRoute home"><span className="logo-mark"><Leaf size={19} /></span><span><strong>Isuku Route</strong><small>AI-Powered EcoRoute</small></span></a><button className="mobile-toggle" onClick={() => setMobileOpen(!mobileOpen)} aria-label="Toggle navigation">{mobileOpen ? <X size={22} /> : <Menu size={22} />}</button><nav className={mobileOpen ? 'site-nav nav-open' : 'site-nav'}>{['How It Works', 'Features', 'For Companies', 'For Customers', 'About', 'Contact'].map((label) => <a key={label} href={`#${label.toLowerCase().replaceAll(' ', '-')}`} onClick={() => setMobileOpen(false)}>{label}</a>)}<div className="nav-actions"><button className="signin-link" onClick={() => openDialog('signin')}>Sign In</button><button className="header-cta" onClick={() => openDialog('register')}>Register Company <ArrowRight size={15} /></button></div></nav></header>
     <main id="top">

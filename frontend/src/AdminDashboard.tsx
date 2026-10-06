@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { ArrowUpRight, Building2, CalendarDays, CheckCircle2, Clock3, CreditCard, MapPin, RefreshCw, Truck, Users, Wallet } from 'lucide-react'
 import './AdminDashboard.css'
 
-type AdminDashboardProps = { onOpen: (view: string) => void }
+type AdminDashboardProps = { token: string; onOpen: (view: string) => void }
 type CollectionDay = { date: string; total: number; completed: number }
 type RecentCollection = { id: string; customer: string; address: string; driver: string; time: string | null; status: string; date: string }
 type RecentPayment = { id: string; customer: string; amount: number; method: string; reference: string; paidAt: string }
@@ -30,7 +30,7 @@ const currencyFormat = new Intl.NumberFormat('en-RW', { style: 'currency', curre
 const shortDate = new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' })
 const shortDateTime = new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 
-export default function AdminDashboard({ onOpen }: AdminDashboardProps) {
+export default function AdminDashboard({ token, onOpen }: AdminDashboardProps) {
   const [summary, setSummary] = useState<Summary | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -40,7 +40,7 @@ export default function AdminDashboard({ onOpen }: AdminDashboardProps) {
     const controller = new AbortController()
     setLoading(true)
     setError('')
-    void fetch(`${apiBase}/api/dashboard/summary`, { signal: controller.signal })
+    void fetch(`${apiBase}/api/dashboard/summary`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal })
       .then(async (response) => {
         const result = await response.json() as Summary | { error?: string }
         if (!response.ok) throw new Error('error' in result ? result.error : 'Dashboard data could not be loaded.')
@@ -52,7 +52,7 @@ export default function AdminDashboard({ onOpen }: AdminDashboardProps) {
       })
       .finally(() => setLoading(false))
     return () => controller.abort()
-  }, [reloadKey])
+  }, [reloadKey, token])
 
   const maxCollections = Math.max(1, ...(summary?.weeklyCollections.map((day) => day.total) ?? []))
   const dateToday = new Intl.DateTimeFormat('en', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).format(new Date())

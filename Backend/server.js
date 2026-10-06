@@ -27,6 +27,7 @@ const pool = new Pool({
 
 const hashPassword = (value) => crypto.createHash('sha256').update(String(value)).digest('hex');
 const adminTokenSecret = process.env.ADMIN_TOKEN_SECRET || hashPassword(adminPassword);
+const companyTokenSecret = process.env.COMPANY_TOKEN_SECRET || hashPassword(`company:${adminPassword}`);
 
 function createAdminToken(user) {
   const payload = Buffer.from(JSON.stringify({
@@ -37,6 +38,52 @@ function createAdminToken(user) {
   })).toString('base64url');
   const signature = crypto.createHmac('sha256', adminTokenSecret).update(payload).digest('base64url');
   return `${payload}.${signature}`;
+}
+
+function createCompanyToken(user) {
+  const payload = Buffer.from(JSON.stringify({
+    userId: user.id,
+    companyId: user.companyId,
+    role: user.role,
+    employeeRole: user.employeeRole ?? null,
+    expiresAt: Date.now() + 8 * 60 * 60 * 1000,
+  })).toString('base64url');
+  const signature = crypto.createHmac('sha256', companyTokenSecret).update(payload).digest('base64url');
+  return `${payload}.${signature}`;
+}
+
+async function requireCompany(req, res, next) {
+  const token = req.get('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1];
+  if (!token) return res.status(401).json({ error: 'Company authentication is required.' });
+  const [payload, signature, extra] = token.split('.');
+  if (!payload || !signature || extra) return res.status(401).json({ error: 'Company session is invalid or expired.' });
+  const expected = crypto.createHmac('sha256', companyTokenSecret).update(payload).digest();
+  const provided = Buffer.from(signature, 'base64url');
+  if (provided.length !== expected.length || !crypto.timingSafeEqual(provided, expected)) {
+    return res.status(401).json({ error: 'Company session is invalid or expired.' });
+  }
+  try {
+    const session = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (!session.companyId || !Number.isFinite(session.expiresAt) || session.expiresAt <= Date.now() ||
+      !['company', 'company_employee'].includes(session.role)) {
+      return res.status(401).json({ error: 'Company session is invalid or expired.' });
+    }
+    const company = await pool.query(
+      `SELECT c.status, ce.status AS employee_status
+       FROM companies c
+       LEFT JOIN company_employees ce ON ce.company_id = c.id AND ce.user_id = $2
+       WHERE c.id = $1`,
+      [session.companyId, session.userId]
+    );
+    if (!company.rowCount || company.rows[0].status !== 'Approved' ||
+      (session.role === 'company_employee' && company.rows[0].employee_status !== 'Active')) {
+      return res.status(403).json({ error: 'Company access is not active.' });
+    }
+    req.company = session;
+    return next();
+  } catch {
+    return res.status(401).json({ error: 'Company session is invalid or expired.' });
+  }
 }
 
 function requireAdmin(req, res, next) {
@@ -64,6 +111,31 @@ function requireAdmin(req, res, next) {
   } catch {
     return res.status(401).json({ error: 'Admin session is invalid or expired.' });
   }
+}
+
+function requireOwnCompany(req, res, next) {
+  if (req.params.companyId !== req.company.companyId) {
+    return res.status(403).json({ error: 'You can only access your own company records.' });
+  }
+  return next();
+}
+
+function requireOwnCompanyScope(req, res, next) {
+  const requestedCompanyId = req.params.companyId ?? req.query.companyId ?? req.body?.companyId;
+  if (requestedCompanyId && requestedCompanyId !== req.company.companyId) {
+    return res.status(403).json({ error: 'You can only access your own company records.' });
+  }
+  return next();
+}
+
+function companyScopedAccess(req, res, next) {
+  const hasToken = Boolean(req.get('authorization'));
+  const requestedCompanyId = req.params.companyId ?? req.query.companyId ?? req.body?.companyId;
+  if (!hasToken && requestedCompanyId) {
+    return res.status(401).json({ error: 'Company authentication is required.' });
+  }
+  if (!hasToken) return next();
+  return requireCompany(req, res, () => requireOwnCompanyScope(req, res, next));
 }
 
 async function initializeDatabase() {
@@ -172,6 +244,33 @@ async function initializeDatabase() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS company_vehicles (
+      id SERIAL PRIMARY KEY,
+      company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      plate_number VARCHAR(100) NOT NULL,
+      vehicle_type VARCHAR(100) NOT NULL,
+      capacity VARCHAR(100) NOT NULL,
+      status VARCHAR(30) NOT NULL DEFAULT 'Available',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (company_id, plate_number)
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS company_routes (
+      id SERIAL PRIMARY KEY,
+      company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      name VARCHAR(255) NOT NULL,
+      area VARCHAR(255) NOT NULL,
+      route_date DATE NOT NULL,
+      staff_id INTEGER REFERENCES company_employees(id) ON DELETE SET NULL,
+      vehicle_id INTEGER REFERENCES company_vehicles(id) ON DELETE SET NULL,
+      status VARCHAR(30) NOT NULL DEFAULT 'Planned' CHECK (status IN ('Planned', 'In Progress', 'Completed')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await pool.query('ALTER TABLE collections ADD COLUMN IF NOT EXISTS company_id UUID REFERENCES companies(id);');
+  await pool.query('ALTER TABLE collections ADD COLUMN IF NOT EXISTS route_id INTEGER REFERENCES company_routes(id) ON DELETE SET NULL;');
   await pool.query("ALTER TABLE customers ADD COLUMN IF NOT EXISTS customer_type VARCHAR(100) NOT NULL DEFAULT 'Household';");
   await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS pricing_rule_id INTEGER REFERENCES company_pricing_rules(id);');
   await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS company_id UUID REFERENCES companies(id);');
@@ -372,6 +471,12 @@ app.post('/api/auth/login', async (req, res) => {
     if (user.role === 'company_employee' && user.employee_status !== 'Active') {
       return res.status(403).json({ error: 'This employee account is inactive. Contact your company administrator.' });
     }
+    if (['company', 'company_employee'].includes(user.role)) {
+      const company = await pool.query('SELECT status FROM companies WHERE id = $1', [user.company_id]);
+      if (!user.company_id || !company.rowCount || company.rows[0].status !== 'Approved') {
+        return res.status(403).json({ error: 'Your company account is awaiting approval or is not active.' });
+      }
+    }
     await pool.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
     const userResponse = {
       id: user.id,
@@ -385,6 +490,7 @@ app.post('/api/auth/login', async (req, res) => {
     return res.json({
       user: userResponse,
       ...(user.role === 'admin' ? { adminToken: createAdminToken(userResponse) } : {}),
+      ...(['company', 'company_employee'].includes(user.role) ? { companyToken: createCompanyToken(userResponse) } : {}),
       message: 'Login successful.'
     });
 
@@ -699,7 +805,7 @@ app.post('/api/auth/google', async (req, res) => {
   }
 });
 
-app.get('/api/customers', async (req, res) => {
+app.get('/api/customers', companyScopedAccess, async (req, res) => {
   try {
     const customerId = String(req.query.customerId ?? '').trim();
     const companyId = String(req.query.companyId ?? '').trim();
@@ -725,7 +831,7 @@ app.get('/api/customers', async (req, res) => {
   }
 });
 
-app.post('/api/customers', async (req, res) => {
+app.post('/api/customers', requireCompany, requireOwnCompanyScope, async (req, res) => {
   try {
     const name = String(req.body?.name ?? '').trim();
     const phone = String(req.body?.phone ?? '').trim();
@@ -758,7 +864,7 @@ app.post('/api/customers', async (req, res) => {
   }
 });
 
-app.patch('/api/customers/:id', async (req, res) => {
+app.patch('/api/customers/:id', requireCompany, requireOwnCompanyScope, async (req, res) => {
   try {
     const customerId = String(req.params.id ?? '').trim();
     const companyId = String(req.body?.companyId ?? '').trim();
@@ -783,7 +889,7 @@ app.patch('/api/customers/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/customers/:id', async (req, res) => {
+app.delete('/api/customers/:id', requireCompany, requireOwnCompanyScope, async (req, res) => {
   try {
     const customerId = String(req.params.id ?? '').trim();
     const companyId = String(req.query.companyId ?? '').trim();
@@ -802,7 +908,7 @@ app.delete('/api/customers/:id', async (req, res) => {
   }
 });
 
-app.get('/api/payments', async (req, res) => {
+app.get('/api/payments', companyScopedAccess, async (req, res) => {
   try {
     const customerId = String(req.query.customerId ?? '').trim();
     const companyId = String(req.query.companyId ?? '').trim();
@@ -830,7 +936,7 @@ app.get('/api/payments', async (req, res) => {
   }
 });
 
-app.post('/api/payments', async (req, res) => {
+app.post('/api/payments', requireCompany, requireOwnCompanyScope, async (req, res) => {
   const client = await pool.connect();
   try {
     const customerId = String(req.body?.customerId ?? '').trim();
@@ -898,6 +1004,281 @@ app.get('/api/collections', async (_req, res) => {
   }
 });
 
+app.get('/api/company/vehicles', requireCompany, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id::text AS id, plate_number AS "plateNumber", vehicle_type AS type,
+        capacity, status FROM company_vehicles
+       WHERE company_id = $1 ORDER BY created_at DESC, id DESC`,
+      [req.company.companyId]
+    );
+    return res.json(result.rows);
+  } catch (error) {
+    return res.status(500).json({ error: 'Vehicles could not be loaded.', details: error.message });
+  }
+});
+
+app.post('/api/company/vehicles', requireCompany, async (req, res) => {
+  try {
+    const plateNumber = String(req.body?.plateNumber ?? '').trim();
+    const type = String(req.body?.type ?? '').trim();
+    const capacity = String(req.body?.capacity ?? '').trim();
+    const status = String(req.body?.status ?? 'Available').trim();
+    if (!plateNumber || !type || !capacity || !['Available', 'Occupied'].includes(status)) {
+      return res.status(400).json({ error: 'Plate number, vehicle type, capacity and a valid status are required.' });
+    }
+    const result = await pool.query(
+      `INSERT INTO company_vehicles (company_id, plate_number, vehicle_type, capacity, status)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id::text AS id, plate_number AS "plateNumber", vehicle_type AS type, capacity, status`,
+      [req.company.companyId, plateNumber, type, capacity, status]
+    );
+    return res.status(201).json(result.rows[0]);
+  } catch (error) {
+    if (error.code === '23505') return res.status(409).json({ error: 'A vehicle with that plate number already exists for your company.' });
+    return res.status(500).json({ error: 'Vehicle could not be saved.', details: error.message });
+  }
+});
+
+app.get('/api/company/collections', requireCompany, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id::text AS id,
+        COALESCE(TO_CHAR(collection_time, 'HH24:MI'), '') AS time,
+        TO_CHAR(COALESCE(collection_date, created_at::date), 'YYYY-MM-DD') AS date,
+        COALESCE(address, '') AS address, COALESCE(customer, '') AS customer,
+        COALESCE(driver, 'Unassigned') AS driver, COALESCE(vehicle, 'Unassigned') AS vehicle,
+        COALESCE(status, 'Scheduled') AS status
+       FROM collections WHERE company_id = $1
+       ORDER BY COALESCE(collection_date, created_at::date) DESC, collection_time DESC NULLS LAST, id DESC`,
+      [req.company.companyId]
+    );
+    return res.json(result.rows);
+  } catch (error) {
+    return res.status(500).json({ error: 'Could not load company collections.', details: error.message });
+  }
+});
+
+app.post('/api/company/collections', requireCompany, async (req, res) => {
+  try {
+    const customer = String(req.body?.customer ?? '').trim();
+    const address = String(req.body?.address ?? '').trim();
+    const driver = String(req.body?.driver ?? 'Unassigned').trim();
+    const vehicle = String(req.body?.vehicle ?? 'Unassigned').trim();
+    const date = String(req.body?.date ?? '').trim();
+    const time = String(req.body?.time ?? '').trim();
+    if (!customer || !address || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) {
+      return res.status(400).json({ error: 'Customer, address, date and time are required.' });
+    }
+    const result = await pool.query(
+      `INSERT INTO collections (company_id, customer, address, driver, vehicle, collection_date, collection_time, status)
+       VALUES ($1, $2, $3, $4, $5, $6::date, $7::time, 'Scheduled')
+       RETURNING id::text AS id, TO_CHAR(collection_time, 'HH24:MI') AS time,
+         TO_CHAR(collection_date, 'YYYY-MM-DD') AS date, address, customer, driver, vehicle, status`,
+      [req.company.companyId, customer, address, driver || 'Unassigned', vehicle || 'Unassigned', date, time]
+    );
+    return res.status(201).json(result.rows[0]);
+  } catch (error) {
+    return res.status(500).json({ error: 'Collection could not be created.', details: error.message });
+  }
+});
+
+app.patch('/api/company/collections/:id/status', requireCompany, async (req, res) => {
+  try {
+    const status = String(req.body?.status ?? '').trim();
+    if (!/^\d+$/.test(req.params.id) || !['Scheduled', 'In Progress', 'Completed', 'Missed', 'Cancelled'].includes(status)) {
+      return res.status(400).json({ error: 'A valid collection ID and status are required.' });
+    }
+    const result = await pool.query(
+      `UPDATE collections SET status = $1 WHERE id = $2 AND company_id = $3
+       RETURNING id::text AS id, COALESCE(TO_CHAR(collection_time, 'HH24:MI'), '') AS time,
+         TO_CHAR(COALESCE(collection_date, created_at::date), 'YYYY-MM-DD') AS date,
+         COALESCE(address, '') AS address, COALESCE(customer, '') AS customer,
+         COALESCE(driver, 'Unassigned') AS driver, COALESCE(vehicle, 'Unassigned') AS vehicle, status`,
+      [status, Number(req.params.id), req.company.companyId]
+    );
+    if (!result.rowCount) return res.status(404).json({ error: 'Collection was not found.' });
+    return res.json(result.rows[0]);
+  } catch (error) {
+    return res.status(500).json({ error: 'Collection status could not be updated.', details: error.message });
+  }
+});
+
+app.delete('/api/company/collections/:id', requireCompany, async (req, res) => {
+  try {
+    if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'Collection ID must be a positive integer.' });
+    const result = await pool.query(
+      'DELETE FROM collections WHERE id = $1 AND company_id = $2 RETURNING id',
+      [Number(req.params.id), req.company.companyId]
+    );
+    if (!result.rowCount) return res.status(404).json({ error: 'Collection was not found.' });
+    return res.json({ message: 'Collection deleted successfully.' });
+  } catch (error) {
+    return res.status(500).json({ error: 'Collection could not be deleted.', details: error.message });
+  }
+});
+
+app.get('/api/company/routes', requireCompany, async (req, res) => {
+  try {
+    const companyId = req.company.companyId;
+    const [routeResult, unassignedResult, staffResult, vehicleResult] = await Promise.all([
+      pool.query(
+        `SELECT r.id::text AS id, r.name, r.area, TO_CHAR(r.route_date, 'YYYY-MM-DD') AS date,
+          r.status, r.staff_id::text AS "staffId", u.full_name AS "staffName",
+          r.vehicle_id::text AS "vehicleId", v.plate_number AS vehicle
+         FROM company_routes r
+         LEFT JOIN company_employees e ON e.id = r.staff_id AND e.company_id = r.company_id
+         LEFT JOIN users u ON u.id = e.user_id
+         LEFT JOIN company_vehicles v ON v.id = r.vehicle_id AND v.company_id = r.company_id
+         WHERE r.company_id = $1 ORDER BY r.route_date, r.id`,
+        [companyId]
+      ),
+      pool.query(
+        `SELECT c.id::text AS id, COALESCE(c.customer, '') AS customer,
+          COALESCE(c.address, '') AS address,
+          TO_CHAR(COALESCE(c.collection_date, c.created_at::date), 'YYYY-MM-DD') AS date,
+          COALESCE(TO_CHAR(c.collection_time, 'HH24:MI'), '') AS time,
+          COALESCE(c.status, 'Scheduled') AS status
+         FROM collections c WHERE c.company_id = $1 AND c.route_id IS NULL
+           AND COALESCE(c.status, 'Scheduled') = 'Scheduled'
+         ORDER BY COALESCE(c.collection_date, c.created_at::date), c.collection_time NULLS LAST, c.id`,
+        [companyId]
+      ),
+      pool.query(
+        `SELECT e.id::text AS id, u.full_name AS name, e.role AS position
+         FROM company_employees e JOIN users u ON u.id = e.user_id
+         WHERE e.company_id = $1 AND e.status = 'Active' ORDER BY u.full_name`,
+        [companyId]
+      ),
+      pool.query(
+        `SELECT id::text AS id, plate_number AS "plateNumber", vehicle_type AS type
+         FROM company_vehicles WHERE company_id = $1 AND status = 'Available' ORDER BY plate_number`,
+        [companyId]
+      ),
+    ]);
+    const routeIds = routeResult.rows.map((route) => route.id);
+    const stopsResult = routeIds.length
+      ? await pool.query(
+        `SELECT route_id::text AS "routeId", id::text AS id, COALESCE(customer, '') AS customer,
+          COALESCE(address, '') AS address,
+          TO_CHAR(COALESCE(collection_date, created_at::date), 'YYYY-MM-DD') AS date,
+          COALESCE(TO_CHAR(collection_time, 'HH24:MI'), '') AS time,
+          COALESCE(status, 'Scheduled') AS status
+         FROM collections WHERE company_id = $1 AND route_id = ANY($2::integer[])
+         ORDER BY COALESCE(collection_date, created_at::date), collection_time NULLS LAST, id`,
+        [companyId, routeIds.map(Number)]
+      )
+      : { rows: [] };
+    const stopsByRoute = new Map();
+    for (const stop of stopsResult.rows) {
+      const stops = stopsByRoute.get(stop.routeId) ?? [];
+      stops.push(stop);
+      stopsByRoute.set(stop.routeId, stops);
+    }
+    return res.json({
+      routes: routeResult.rows.map((route) => ({ ...route, stops: stopsByRoute.get(route.id) ?? [] })),
+      unassignedCollections: unassignedResult.rows,
+      staff: staffResult.rows,
+      vehicles: vehicleResult.rows,
+    });
+  } catch (error) {
+    return res.status(500).json({ error: 'Routes could not be loaded.', details: error.message });
+  }
+});
+
+app.post('/api/company/routes', requireCompany, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const name = String(req.body?.name ?? '').trim();
+    const area = String(req.body?.area ?? '').trim();
+    const date = String(req.body?.date ?? '').trim();
+    const collectionIds = Array.isArray(req.body?.collectionIds) ? req.body.collectionIds.map(String) : [];
+    const staffId = req.body?.staffId ? String(req.body.staffId) : null;
+    const vehicleId = req.body?.vehicleId ? String(req.body.vehicleId) : null;
+    if (!name || !area || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !collectionIds.length ||
+      collectionIds.some((id) => !/^\d+$/.test(id)) || (staffId && !/^\d+$/.test(staffId)) ||
+      (vehicleId && !/^\d+$/.test(vehicleId))) {
+      return res.status(400).json({ error: 'Route details and at least one valid collection stop are required.' });
+    }
+    const companyId = req.company.companyId;
+    await client.query('BEGIN');
+    if (staffId) {
+      const staff = await client.query(
+        `SELECT 1 FROM company_employees WHERE id = $1 AND company_id = $2 AND status = 'Active'`,
+        [Number(staffId), companyId]
+      );
+      if (!staff.rowCount) throw Object.assign(new Error('The selected staff member is not active in this company.'), { statusCode: 400 });
+    }
+    if (vehicleId) {
+      const vehicle = await client.query(
+        `SELECT 1 FROM company_vehicles WHERE id = $1 AND company_id = $2 AND status = 'Available'`,
+        [Number(vehicleId), companyId]
+      );
+      if (!vehicle.rowCount) throw Object.assign(new Error('The selected vehicle is not available in this company.'), { statusCode: 400 });
+    }
+    const assigned = await client.query(
+      `SELECT id FROM collections
+       WHERE company_id = $1 AND route_id IS NULL AND COALESCE(status, 'Scheduled') = 'Scheduled'
+         AND id = ANY($2::integer[]) FOR UPDATE`,
+      [companyId, collectionIds.map(Number)]
+    );
+    if (assigned.rowCount !== collectionIds.length) {
+      throw Object.assign(new Error('One or more selected collections are unavailable or belong to another company.'), { statusCode: 409 });
+    }
+    const route = await client.query(
+      `INSERT INTO company_routes (company_id, name, area, route_date, staff_id, vehicle_id)
+       VALUES ($1, $2, $3, $4::date, $5, $6) RETURNING id`,
+      [companyId, name, area, date, staffId ? Number(staffId) : null, vehicleId ? Number(vehicleId) : null]
+    );
+    await client.query(
+      'UPDATE collections SET route_id = $1 WHERE company_id = $2 AND id = ANY($3::integer[])',
+      [route.rows[0].id, companyId, collectionIds.map(Number)]
+    );
+    await client.query('COMMIT');
+    return res.status(201).json({ id: String(route.rows[0].id), message: 'Route created successfully.' });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    return res.status(error.statusCode ?? 500).json({
+      error: error.message || 'Route could not be created.',
+      ...(error.statusCode ? {} : { details: error.message }),
+    });
+  } finally {
+    client.release();
+  }
+});
+
+app.patch('/api/company/routes/:id/status', requireCompany, async (req, res) => {
+  try {
+    const status = String(req.body?.status ?? '').trim();
+    if (!/^\d+$/.test(req.params.id) || !['Planned', 'In Progress', 'Completed'].includes(status)) {
+      return res.status(400).json({ error: 'A valid route ID and status are required.' });
+    }
+    const result = await pool.query(
+      `UPDATE company_routes SET status = $1 WHERE id = $2 AND company_id = $3
+       RETURNING id::text AS id, status`,
+      [status, Number(req.params.id), req.company.companyId]
+    );
+    if (!result.rowCount) return res.status(404).json({ error: 'Route was not found.' });
+    return res.json(result.rows[0]);
+  } catch (error) {
+    return res.status(500).json({ error: 'Route status could not be updated.', details: error.message });
+  }
+});
+
+app.delete('/api/company/routes/:id', requireCompany, async (req, res) => {
+  try {
+    if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'Route ID must be a positive integer.' });
+    const result = await pool.query(
+      'DELETE FROM company_routes WHERE id = $1 AND company_id = $2 RETURNING id',
+      [Number(req.params.id), req.company.companyId]
+    );
+    if (!result.rowCount) return res.status(404).json({ error: 'Route was not found.' });
+    return res.json({ message: 'Route deleted successfully.' });
+  } catch (error) {
+    return res.status(500).json({ error: 'Route could not be deleted.', details: error.message });
+  }
+});
+
 app.get('/api/companies', async (_req, res) => {
   try {
     const result = await pool.query(`
@@ -938,7 +1319,7 @@ app.get('/api/companies', async (_req, res) => {
   }
 });
 
-app.get('/api/companies/:companyId/employees', async (req, res) => {
+app.get('/api/companies/:companyId/employees', requireCompany, requireOwnCompany, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT e.id::text AS id, e.employee_id AS "employeeId", u.full_name AS name,
@@ -956,7 +1337,7 @@ app.get('/api/companies/:companyId/employees', async (req, res) => {
   }
 });
 
-app.post('/api/companies/:companyId/employees', async (req, res) => {
+app.post('/api/companies/:companyId/employees', requireCompany, requireOwnCompany, async (req, res) => {
   const client = await pool.connect();
   try {
     const { companyId } = req.params;
@@ -968,7 +1349,7 @@ app.post('/api/companies/:companyId/employees', async (req, res) => {
     const role = String(req.body?.role ?? '').trim();
     const status = String(req.body?.status ?? 'Active').trim();
     const password = String(req.body?.password ?? '');
-    const employeeRoles = ['Company Owner / Director', 'Manager', 'Company Admin', 'Operations Dispatcher', 'Supervisor', 'Driver', 'Collection Team', 'Finance / Billing Officer', 'Customer Service Officer', 'Fleet Officer'];
+    const employeeRoles = ['Company Owner / Director', 'Manager', 'Company Admin', 'Operations Dispatcher', 'Supervisor', 'Driver', 'Collection Team', 'Finance / Billing Officer', 'Customer Service Officer', 'Fleet Officer', 'Secretary', 'Worker', 'Accountant', 'HR'];
     if (!name || !phone || !email || !employeeId || !department || !employeeRoles.includes(role) || !['Active', 'Inactive', 'Suspended'].includes(status) || password.length < 8) {
       return res.status(400).json({ error: 'Complete all employee fields, choose a valid role and use a password of at least 8 characters.' });
     }
@@ -1001,7 +1382,7 @@ app.post('/api/companies/:companyId/employees', async (req, res) => {
   }
 });
 
-app.patch('/api/companies/:companyId/employees/:employeeId', async (req, res) => {
+app.patch('/api/companies/:companyId/employees/:employeeId', requireCompany, requireOwnCompany, async (req, res) => {
   const client = await pool.connect();
   try {
     const { companyId, employeeId } = req.params;
@@ -1011,7 +1392,7 @@ app.patch('/api/companies/:companyId/employees/:employeeId', async (req, res) =>
     const department = String(req.body?.department ?? '').trim();
     const role = String(req.body?.role ?? '').trim();
     const status = String(req.body?.status ?? '').trim();
-    const employeeRoles = ['Company Owner / Director', 'Manager', 'Company Admin', 'Operations Dispatcher', 'Supervisor', 'Driver', 'Collection Team', 'Finance / Billing Officer', 'Customer Service Officer', 'Fleet Officer'];
+    const employeeRoles = ['Company Owner / Director', 'Manager', 'Company Admin', 'Operations Dispatcher', 'Supervisor', 'Driver', 'Collection Team', 'Finance / Billing Officer', 'Customer Service Officer', 'Fleet Officer', 'Secretary', 'Worker', 'Accountant', 'HR'];
     if (!name || !phone || !email || !department || !employeeRoles.includes(role) || !['Active', 'Inactive', 'Suspended'].includes(status)) {
       return res.status(400).json({ error: 'Complete all employee fields and choose a valid role and status.' });
     }
@@ -1042,7 +1423,7 @@ app.patch('/api/companies/:companyId/employees/:employeeId', async (req, res) =>
   }
 });
 
-app.get('/api/companies/:companyId/pricing', async (req, res) => {
+app.get('/api/companies/:companyId/pricing', requireCompany, requireOwnCompany, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT id::text AS id, customer_type AS "customerType", amount::double precision AS amount,
@@ -1056,7 +1437,7 @@ app.get('/api/companies/:companyId/pricing', async (req, res) => {
   }
 });
 
-app.post('/api/companies/:companyId/pricing', async (req, res) => {
+app.post('/api/companies/:companyId/pricing', requireCompany, requireOwnCompany, async (req, res) => {
   try {
     const { companyId } = req.params;
     const customerType = String(req.body?.customerType ?? '').trim();
@@ -1079,7 +1460,7 @@ app.post('/api/companies/:companyId/pricing', async (req, res) => {
   }
 });
 
-app.patch('/api/companies/:companyId/pricing/:pricingId', async (req, res) => {
+app.patch('/api/companies/:companyId/pricing/:pricingId', requireCompany, requireOwnCompany, async (req, res) => {
   try {
     const { companyId, pricingId } = req.params;
     const active = Boolean(req.body?.active);

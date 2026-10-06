@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Calendar, Check, ChevronRight, Clock, Plus, Trash2, X } from 'lucide-react'
+import { companyFetch } from './companyApi'
 import './App.css'
 
 type CollectionStatus = 'Scheduled' | 'In Progress' | 'Completed' | 'Missed' | 'Cancelled'
 type Collection = { id: string; time: string; date: string; address: string; customer: string; driver: string; vehicle: string; status: CollectionStatus }
-const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
 
 export default function CompanyCollectionsView() {
   const [collections, setCollections] = useState<Collection[]>([])
@@ -17,7 +17,7 @@ export default function CompanyCollectionsView() {
     setLoading(true)
     setError('')
     try {
-      const response = await fetch(`${apiBase}/api/collections`)
+      const response = await companyFetch('/api/company/collections')
       const result = await response.json() as Collection[] | { error?: string }
       if (!response.ok) throw new Error('error' in result ? result.error : 'Collections could not be loaded')
       setCollections(result as Collection[])
@@ -33,7 +33,7 @@ export default function CompanyCollectionsView() {
   const updateStatus = async (collection: Collection, status: CollectionStatus) => {
     setError('')
     try {
-      const response = await fetch(`${apiBase}/api/collections/${collection.id}/status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) })
+      const response = await companyFetch(`/api/company/collections/${collection.id}/status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) })
       const result = await response.json() as Collection | { error?: string }
       if (!response.ok) throw new Error('error' in result ? result.error : 'Collection status could not be updated')
       setCollections((items) => items.map((item) => item.id === collection.id ? result as Collection : item))
@@ -46,7 +46,7 @@ export default function CompanyCollectionsView() {
     if (!window.confirm(`Delete collection ${collection.id}? This cannot be undone.`)) return
     setError('')
     try {
-      const response = await fetch(`${apiBase}/api/collections/${collection.id}`, { method: 'DELETE' })
+      const response = await companyFetch(`/api/company/collections/${collection.id}`, { method: 'DELETE' })
       const result = await response.json() as { error?: string }
       if (!response.ok) throw new Error(result.error ?? 'Collection could not be deleted')
       setCollections((items) => items.filter((item) => item.id !== collection.id))
@@ -79,7 +79,6 @@ function AddCollectionForm({ onClose, onSuccess }: { onClose: () => void; onSucc
   const [vehicle, setVehicle] = useState('Unassigned')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -87,7 +86,7 @@ function AddCollectionForm({ onClose, onSuccess }: { onClose: () => void; onSucc
     setSubmitting(true)
     setError('')
     try {
-      const response = await fetch(`${apiBase}/api/collections`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ time, date, address, customer, driver, vehicle }) })
+      const response = await companyFetch('/api/company/collections', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ time, date, address, customer, driver, vehicle }) })
       const result = await response.json() as Collection | { error?: string }
       if (!response.ok) throw new Error('error' in result ? result.error : 'Collection could not be created')
       onSuccess()

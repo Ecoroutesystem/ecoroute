@@ -4,12 +4,13 @@ import CompanyCustomersView from './CompanyCustomersView'
 import CompanyCollectionsView from './CompanyCollectionsView'
 import CompanyPricingView from './CompanyPricingView'
 import { CompanyPaymentsView } from './PaymentViews'
+import CompanyRoutesView from './CompanyRoutesView'
+import { companyFetch } from './companyApi'
 import './App.css'
 
 type CompanyPortalProps = { companyId: string; userName: string; userRole: string; onLogout: () => void }
 type Customer = { id: string; name: string; phone?: string; location: string; plan: string; balance: string; status: 'Active' | 'Suspended' | 'Archived' }
 type Collection = { id: string; time: string; date: string; address: string; customer: string; driver: string; vehicle: string; status: 'Scheduled' | 'In Progress' | 'Completed' | 'Missed' | 'Cancelled' }
-const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
 const navigation = [
   { label: 'Dashboard', icon: LayoutDashboard },
   { label: 'Customers', icon: Users },
@@ -53,6 +54,10 @@ export default function CompanyPortal({ companyId, userName, userRole, onLogout 
     'Finance / Billing Officer': ['Dashboard', 'Customers', 'Payments', 'Subscriptions', 'Reports'],
     'Customer Service Officer': ['Dashboard', 'Customers', 'Notifications'],
     'Fleet Officer': ['Dashboard', 'Vehicles', 'Users & vehicles'],
+    Secretary: ['Dashboard', 'Customers', 'Collections', 'Notifications'],
+    Worker: ['Dashboard', 'Collections', 'Routes'],
+    Accountant: ['Dashboard', 'Payments', 'Subscriptions', 'Reports'],
+    HR: ['Dashboard', 'Staff'],
   }
   const allowedViews = roleViews[userRole]
   const companyNavigation = allowedViews ? navigation.filter(({ label }) => allowedViews.includes(label)) : navigation
@@ -98,12 +103,14 @@ export default function CompanyPortal({ companyId, userName, userRole, onLogout 
                 </div>
                 <span className="admin-status"><i /> Connected</span>
               </div>
-              <CompanyDashboard onOpen={setActiveView} />
+              <CompanyDashboard companyId={companyId} onOpen={setActiveView} />
             </>
           ) : activeView === 'Customers' ? (
             <CompanyCustomersView companyId={companyId} />
           ) : activeView === 'Collections' ? (
             <CompanyCollectionsView />
+          ) : activeView === 'Routes' ? (
+            <CompanyRoutesView />
           ) : activeView === 'Payments' ? (
             <CompanyPaymentsView companyId={companyId} />
           ) : activeView === 'Staff' ? (
@@ -113,7 +120,7 @@ export default function CompanyPortal({ companyId, userName, userRole, onLogout 
           ) : activeView === 'Vehicles' ? (
             <CompanyVehiclesView />
           ) : activeView === 'Users & vehicles' ? (
-            <CompanyUsersVehiclesView />
+            <CompanyUsersVehiclesView companyId={companyId} />
           ) : activeView === 'Settings' ? (
             <CompanySettingsView />
           ) : (
@@ -135,7 +142,7 @@ export default function CompanyPortal({ companyId, userName, userRole, onLogout 
   )
 }
 
-function CompanyDashboard({ onOpen }: { onOpen: (view: string) => void }) {
+function CompanyDashboard({ companyId, onOpen }: { companyId: string; onOpen: (view: string) => void }) {
   const [customers, setCustomers] = useState<Customer[]>([])
   const [collections, setCollections] = useState<Collection[]>([])
   const [loading, setLoading] = useState(true)
@@ -147,8 +154,8 @@ function CompanyDashboard({ onOpen }: { onOpen: (view: string) => void }) {
       setError('')
       try {
         const [customersResponse, collectionsResponse] = await Promise.all([
-          fetch(`${apiBase}/api/customers`),
-          fetch(`${apiBase}/api/collections`),
+          companyFetch(`/api/customers?companyId=${encodeURIComponent(companyId)}`),
+          companyFetch('/api/company/collections'),
         ])
 
         const [customersResult, collectionsResult] = await Promise.all([
@@ -292,55 +299,79 @@ function CompanyView({ title, view }: { title: string; view: string }) {
 
 type Vehicle = { id: string; plateNumber: string; type: string; capacity: string; status: 'Available' | 'Occupied' }
 
-function CompanyUsersVehiclesView() {
-  const users = [
-    { name: 'Amina Hassan', role: 'Operations Manager', vehicle: 'CBA-2451', status: 'Active' },
-    { name: 'David Otieno', role: 'Driver', vehicle: 'LRT-7740', status: 'On leave' },
-    { name: 'Grace Njeri', role: 'Collections Supervisor', vehicle: 'Unassigned', status: 'Active' },
-  ]
-  const vehicles = [
-    { plate: 'CBA-2451', type: 'Truck', status: 'Available' },
-    { plate: 'LRT-7740', type: 'Compactor', status: 'Occupied' },
-    { plate: 'JHY-9302', type: 'Van', status: 'Available' },
-  ]
-  return <><div className="admin-heading"><div><p className="section-kicker"><span className="kicker-line" /> OPERATIONS MANAGEMENT</p><h1>Users &amp; vehicles</h1><p>See team access and fleet assignments together before dispatch.</p></div><span className="admin-status"><i /> Connected</span></div><section className="admin-grid"><article className="admin-panel"><div className="admin-panel-heading"><div><h2>Users and assignments</h2><p>Every field user and their current vehicle.</p></div><button onClick={() => window.alert('Add users from the Staff module.')}>Manage users <ChevronRight size={14} /></button></div>{users.map((user) => <div className="staff-row" key={user.name}><div className="staff-badge">{user.name.split(' ').map((part) => part[0]).join('')}</div><div className="staff-main"><strong>{user.name}</strong><small>{user.role} · {user.vehicle}</small></div><span className={`staff-status ${user.status === 'Active' ? 'active' : 'leave'}`}>{user.status}</span></div>)}</article><article className="admin-panel"><div className="admin-panel-heading"><div><h2>Fleet availability</h2><p>Vehicles ready for the next route.</p></div><button onClick={() => window.alert('Add vehicles from the Vehicles module.')}>Manage fleet <ChevronRight size={14} /></button></div>{vehicles.map((vehicle) => <div className="vehicle-row" key={vehicle.plate}><div className="vehicle-badge"><Truck size={16} /></div><div className="vehicle-main"><strong>{vehicle.plate}</strong><small>{vehicle.type}</small></div><span className={`vehicle-status ${vehicle.status === 'Available' ? 'available' : 'occupied'}`}>{vehicle.status}</span></div>)}</article></section></>
+function CompanyUsersVehiclesView({ companyId }: { companyId: string }) {
+  const [staff, setStaff] = useState<StaffMember[]>([])
+  const [vehicles, setVehicles] = useState<Vehicle[]>([])
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    void Promise.all([
+      companyFetch(`/api/companies/${encodeURIComponent(companyId)}/employees`),
+      companyFetch('/api/company/vehicles'),
+    ]).then(async ([staffResponse, vehicleResponse]) => {
+      const [staffData, vehicleData] = await Promise.all([staffResponse.json(), vehicleResponse.json()])
+      if (!staffResponse.ok) throw new Error(staffData.error ?? 'Company staff could not be loaded.')
+      if (!vehicleResponse.ok) throw new Error(vehicleData.error ?? 'Company vehicles could not be loaded.')
+      if (active) {
+        setStaff(staffData as StaffMember[])
+        setVehicles(vehicleData as Vehicle[])
+      }
+    }).catch((requestError: unknown) => {
+      if (active) setError(requestError instanceof Error ? requestError.message : 'Company operations could not be loaded.')
+    })
+    return () => { active = false }
+  }, [companyId])
+
+  return <><div className="admin-heading"><div><p className="section-kicker"><span className="kicker-line" /> OPERATIONS MANAGEMENT</p><h1>Users &amp; vehicles</h1><p>See your company’s team and fleet records together.</p></div><span className="admin-status"><i /> Connected</span></div>{error && <p className="settings-error company-error">{error}</p>}<section className="admin-grid"><article className="admin-panel"><div className="admin-panel-heading"><div><h2>Company users</h2><p>{staff.length} staff accounts</p></div><button onClick={() => window.alert('Manage accounts from the Staff module.')}>Manage users <ChevronRight size={14} /></button></div>{staff.length ? staff.map((user) => <div className="staff-row" key={user.id}><div className="staff-badge">{user.name.split(' ').map((part) => part[0]).join('')}</div><div className="staff-main"><strong>{user.name}</strong><small>{user.role} · {user.department}</small></div><span className={`staff-status ${user.status === 'Active' ? 'active' : 'leave'}`}>{user.status}</span></div>) : <p className="company-loading">No staff accounts found.</p>}</article><article className="admin-panel"><div className="admin-panel-heading"><div><h2>Fleet availability</h2><p>Vehicles registered to this company.</p></div><button onClick={() => window.alert('Manage vehicles from the Vehicles module.')}>Manage fleet <ChevronRight size={14} /></button></div>{vehicles.length ? vehicles.map((vehicle) => <div className="vehicle-row" key={vehicle.id}><div className="vehicle-badge"><Truck size={16} /></div><div className="vehicle-main"><strong>{vehicle.plateNumber}</strong><small>{vehicle.type} · {vehicle.capacity}</small></div><span className={`vehicle-status ${vehicle.status === 'Available' ? 'available' : 'occupied'}`}>{vehicle.status}</span></div>) : <p className="company-loading">No vehicles registered yet.</p>}</article></section></>
 }
 
 function CompanyVehiclesView() {
-  const [vehicles, setVehicles] = useState<Vehicle[]>([
-    { id: 'V-101', plateNumber: 'CBA-2451', type: 'Truck', capacity: '2.4 tons', status: 'Available' },
-    { id: 'V-102', plateNumber: 'LRT-7740', type: 'Compactor', capacity: '3.0 tons', status: 'Occupied' },
-    { id: 'V-103', plateNumber: 'JHY-9302', type: 'Van', capacity: '1.2 tons', status: 'Available' },
-  ])
+  const [vehicles, setVehicles] = useState<Vehicle[]>([])
   const [showAddForm, setShowAddForm] = useState(false)
   const [plateNumber, setPlateNumber] = useState('')
   const [type, setType] = useState('Truck')
   const [capacity, setCapacity] = useState('2.0 tons')
   const [status, setStatus] = useState<'Available' | 'Occupied'>('Available')
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(true)
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!plateNumber.trim()) {
-      setError('Plate number is required.')
-      return
-    }
-
-    const vehicle: Vehicle = {
-      id: `V-${String(vehicles.length + 101)}`,
-      plateNumber: plateNumber.trim(),
-      type,
-      capacity,
-      status,
-    }
-
-    setVehicles((current) => [vehicle, ...current])
-    setPlateNumber('')
-    setType('Truck')
-    setCapacity('2.0 tons')
-    setStatus('Available')
+  const loadVehicles = async () => {
     setError('')
-    setShowAddForm(false)
+    try {
+      const response = await companyFetch('/api/company/vehicles')
+      const result = await response.json() as Vehicle[] | { error?: string }
+      if (!response.ok) throw new Error('error' in result ? result.error : 'Vehicles could not be loaded.')
+      setVehicles(result as Vehicle[])
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Vehicles could not be loaded.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { void loadVehicles() }, [])
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setError('')
+    try {
+      const response = await companyFetch('/api/company/vehicles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plateNumber, type, capacity, status }),
+      })
+      const result = await response.json() as { error?: string }
+      if (!response.ok) throw new Error(result.error ?? 'Vehicle could not be saved.')
+      setPlateNumber('')
+      setType('Truck')
+      setCapacity('2.0 tons')
+      setStatus('Available')
+      setShowAddForm(false)
+      await loadVehicles()
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Vehicle could not be saved.')
+    }
   }
 
   return (
@@ -359,22 +390,22 @@ function CompanyVehiclesView() {
       <section className="company-stats">
         <div className="company-stat green">
           <small>Total vehicles</small>
-          <strong>{vehicles.length}</strong>
+          <strong>{loading ? '...' : vehicles.length}</strong>
           <span>Fleet count</span>
         </div>
         <div className="company-stat blue">
           <small>Available</small>
-          <strong>{vehicles.filter((vehicle) => vehicle.status === 'Available').length}</strong>
+          <strong>{loading ? '...' : vehicles.filter((vehicle) => vehicle.status === 'Available').length}</strong>
           <span>Ready to dispatch</span>
         </div>
         <div className="company-stat yellow">
           <small>Occupied</small>
-          <strong>{vehicles.filter((vehicle) => vehicle.status === 'Occupied').length}</strong>
+          <strong>{loading ? '...' : vehicles.filter((vehicle) => vehicle.status === 'Occupied').length}</strong>
           <span>In service</span>
         </div>
         <div className="company-stat coral">
           <small>Capacity mix</small>
-          <strong>{new Set(vehicles.map((vehicle) => vehicle.type)).size}</strong>
+          <strong>{loading ? '...' : new Set(vehicles.map((vehicle) => vehicle.type)).size}</strong>
           <span>Vehicle types</span>
         </div>
       </section>
@@ -387,7 +418,7 @@ function CompanyVehiclesView() {
           </div>
         </div>
 
-        {vehicles.length === 0 ? (
+        {loading ? <p className="company-loading">Loading company vehicles...</p> : vehicles.length === 0 ? (
           <p className="company-loading">No vehicles added yet.</p>
         ) : (
           vehicles.map((vehicle) => (
@@ -457,7 +488,7 @@ function CompanyVehiclesView() {
 
 type StaffMember = { id: string; employeeId: string; name: string; phone: string; email: string; department: string; role: string; status: 'Active' | 'Inactive' | 'Suspended'; createdAt: string; lastLogin: string | null }
 type StaffForm = { name: string; phone: string; email: string; employeeId: string; department: string; role: string; status: StaffMember['status']; password: string }
-const employeeRoles = ['Company Owner / Director', 'Manager', 'Company Admin', 'Operations Dispatcher', 'Supervisor', 'Driver', 'Collection Team', 'Finance / Billing Officer', 'Customer Service Officer', 'Fleet Officer']
+const employeeRoles = ['Company Owner / Director', 'Manager', 'Company Admin', 'Operations Dispatcher', 'Supervisor', 'Driver', 'Collection Team', 'Finance / Billing Officer', 'Customer Service Officer', 'Fleet Officer', 'Secretary', 'Worker', 'Accountant', 'HR']
 const emptyStaffForm: StaffForm = { name: '', phone: '', email: '', employeeId: '', department: '', role: 'Driver', status: 'Active', password: '' }
 
 function CompanyStaffView({ companyId }: { companyId: string }) {
@@ -475,7 +506,7 @@ function CompanyStaffView({ companyId }: { companyId: string }) {
     setLoading(true)
     setError('')
     try {
-      const response = await fetch(`${apiBase}/api/companies/${encodeURIComponent(companyId)}/employees`)
+      const response = await companyFetch(`/api/companies/${encodeURIComponent(companyId)}/employees`)
       const result = await response.json() as StaffMember[] | { error?: string }
       if (!response.ok) throw new Error('error' in result ? result.error : 'Employee records could not be loaded.')
       setStaff(result as StaffMember[])
@@ -493,7 +524,7 @@ function CompanyStaffView({ companyId }: { companyId: string }) {
       setLoading(false)
       return () => { active = false }
     }
-    void fetch(`${apiBase}/api/companies/${encodeURIComponent(companyId)}/employees`)
+    void companyFetch(`/api/companies/${encodeURIComponent(companyId)}/employees`)
       .then(async (response) => {
         const result = await response.json() as StaffMember[] | { error?: string }
         if (!response.ok) throw new Error('error' in result ? result.error : 'Employee records could not be loaded.')
@@ -520,7 +551,7 @@ function CompanyStaffView({ companyId }: { companyId: string }) {
     setError('')
     setNotice('')
     try {
-      const response = await fetch(`${apiBase}/api/companies/${encodeURIComponent(companyId)}/employees${editingStaff ? `/${editingStaff.id}` : ''}`, {
+      const response = await companyFetch(`/api/companies/${encodeURIComponent(companyId)}/employees${editingStaff ? `/${editingStaff.id}` : ''}`, {
         method: editingStaff ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...form, employeeId: form.employeeId.trim() }),
@@ -539,7 +570,7 @@ function CompanyStaffView({ companyId }: { companyId: string }) {
 
   const updateStatus = async (member: StaffMember, status: StaffMember['status']) => {
     try {
-      const response = await fetch(`${apiBase}/api/companies/${encodeURIComponent(companyId)}/employees/${member.id}`, {
+      const response = await companyFetch(`/api/companies/${encodeURIComponent(companyId)}/employees/${member.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...member, status }),
       })
