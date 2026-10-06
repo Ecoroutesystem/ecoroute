@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react'
-import { ArrowRight, BarChart3, Bell, Bot, Building2, CalendarDays, Check, ChevronLeft, FileCheck2, Leaf, Map, Menu, PackageCheck, Receipt, Route, Truck, UserCircle2, Users, X } from 'lucide-react'
+import { ArrowRight, BarChart3, Bell, Bot, Building2, CalendarDays, Check, ChevronLeft, ChevronRight, FileCheck2, Leaf, Mail, Map, Menu, PackageCheck, Receipt, Route, Truck, UserCircle2, Users, X } from 'lucide-react'
 import { motion } from 'framer-motion'
 import CustomerPortal from './CustomerPortal'
 import AdminPortal from './AdminPortal'
@@ -62,6 +62,15 @@ const problems = [
   ['Limited reporting', 'Turn daily activity into operational and financial decisions.'],
 ]
 
+const homeNavigation = [
+  { label: 'How It Works', href: '#how-it-works', icon: Route },
+  { label: 'Features', href: '#features', icon: PackageCheck },
+  { label: 'For Companies', href: '#for-companies', icon: Building2 },
+  { label: 'For Customers', href: '#for-customers', icon: Users },
+  { label: 'About', href: '#about', icon: Leaf },
+  { label: 'Contact', href: '#contact', icon: Mail },
+]
+
 function App() {
   const [savedSession] = useState(readPersistedSession)
   const [dialog, setDialog] = useState<Dialog>(null)
@@ -78,6 +87,27 @@ function App() {
   const [customerRegister, setCustomerRegister] = useState(false)
   const [authError, setAuthError] = useState('')
   const [forgotPassword, setForgotPassword] = useState(false)
+  useEffect(() => {
+    if (!mobileOpen) return
+
+    const previousOverflow = document.body.style.overflow
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileOpen(false)
+    }
+    const closeOnDesktop = () => {
+      if (window.innerWidth > 920) setMobileOpen(false)
+    }
+
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', closeOnEscape)
+    window.addEventListener('resize', closeOnDesktop)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', closeOnEscape)
+      window.removeEventListener('resize', closeOnDesktop)
+    }
+  }, [mobileOpen])
+
   useEffect(() => {
     if (adminPortal) {
       sessionStorage.setItem('authSession', JSON.stringify({ role: 'admin', token: adminToken }))
@@ -172,7 +202,40 @@ function App() {
   if (companyPortal) return <CompanyPortal companyId={companyContext.id} userName={companyContext.name} userRole={companyContext.role} onLogout={() => { sessionStorage.removeItem('authSession'); sessionStorage.removeItem('companyToken'); setCompanyPortal(false) }} />
   if (customerPortal) return <CustomerPortal customerId={customerId} onLogout={() => { sessionStorage.removeItem('authSession'); setCustomerPortal(false); setCustomerId('') }} />
   return <div className="landing-page">
-    <header className="site-header"><a href="#top" className="site-logo" aria-label="EcoRoute home"><span className="logo-mark"><Leaf size={19} /></span><span><strong>Isuku Route</strong><small>AI-Powered EcoRoute</small></span></a><button className="mobile-toggle" onClick={() => setMobileOpen(!mobileOpen)} aria-label="Toggle navigation">{mobileOpen ? <X size={22} /> : <Menu size={22} />}</button><nav className={mobileOpen ? 'site-nav nav-open' : 'site-nav'}>{['How It Works', 'Features', 'For Companies', 'For Customers', 'About', 'Contact'].map((label) => <a key={label} href={`#${label.toLowerCase().replaceAll(' ', '-')}`} onClick={() => setMobileOpen(false)}>{label}</a>)}<div className="nav-actions"><button className="signin-link" onClick={() => openDialog('signin')}>Sign In</button><button className="header-cta" onClick={() => openDialog('register')}>Register Company <ArrowRight size={15} /></button></div></nav></header>
+    <header className={`site-header ${mobileOpen ? 'mobile-nav-open' : ''}`}>
+      <a href="#top" className="site-logo" aria-label="EcoRoute home" onClick={() => setMobileOpen(false)}>
+        <span className="logo-mark"><Leaf size={19} /></span>
+        <span><strong>Isuku Route</strong><small>AI-Powered EcoRoute</small></span>
+      </a>
+      <button
+        className="mobile-toggle"
+        onClick={() => setMobileOpen((open) => !open)}
+        aria-label={mobileOpen ? 'Close navigation' : 'Open navigation'}
+        aria-expanded={mobileOpen}
+        aria-controls="site-navigation"
+      >
+        {mobileOpen ? <X size={22} /> : <Menu size={22} />}
+      </button>
+      <nav id="site-navigation" aria-label="Main navigation" className={mobileOpen ? 'site-nav nav-open' : 'site-nav'}>
+        <div className="site-nav-heading">
+          <span>EXPLORE ECOROUTE</span>
+          <strong>Everything in one place</strong>
+          <small>Tools for cleaner collection operations.</small>
+        </div>
+        {homeNavigation.map(({ label, href, icon: Icon }) => (
+          <a key={label} href={href} onClick={() => setMobileOpen(false)}>
+            <span className="site-nav-icon"><Icon size={17} /></span>
+            <span className="site-nav-label">{label}</span>
+            <ChevronRight className="site-nav-chevron" size={16} />
+          </a>
+        ))}
+        <div className="nav-actions">
+          <button className="signin-link" onClick={() => { setMobileOpen(false); openDialog('signin') }}>Sign In</button>
+          <button className="header-cta" onClick={() => { setMobileOpen(false); openDialog('register') }}>Register Company <ArrowRight size={15} /></button>
+        </div>
+      </nav>
+    </header>
+    {mobileOpen && <button className="site-nav-backdrop" aria-label="Close navigation" onClick={() => setMobileOpen(false)} />}
     <main id="top">
       <section className="hero-section"><motion.div className="hero-copy" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .65, ease: 'easeOut' }}><p className="section-kicker"><span className="kicker-line" /> CLEANER ROUTES. CLEARER OPERATIONS.</p><h1>Smarter waste collection.<em>Cleaner communities.</em></h1><p className="hero-lede">EcoRoute connects waste collection companies, field teams and customers in one digital platform for scheduling, route management, collection tracking, payments and communication.</p><div className="hero-actions"><button className="hero-primary" onClick={() => openDialog('register')}>Register your company <ArrowRight size={17} /></button><a href="#how-it-works" className="hero-secondary">Explore EcoRoute <span className="play-icon">▶</span></a></div><div className="hero-proof"><div className="proof-avatars"><span>MO</span><span>AN</span><span>DK</span></div><p><strong>One connected workspace</strong><br />for every collection role</p></div></motion.div><motion.div className="hero-visual" initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: .75, delay: .12, ease: 'easeOut' }}><div className="photo-card"><img src="https://images.unsplash.com/photo-1532996122724-e3c354a0b15b?auto=format&fit=crop&w=900&q=85" alt="Recycling collection bins ready for pickup" /><span><Truck size={13} /> Field-ready collection</span></div><HeroPreview /></motion.div></section>
       <section className="platform-strip" aria-label="Platform capabilities"><div><span>01</span><strong>Centralized platform</strong><small>One source of truth</small></div><div><span>02</span><strong>Smart route management</strong><small>Plan with confidence</small></div><div><span>03</span><strong>Digital payments</strong><small>Receipts that travel</small></div><div><span>04</span><strong>Grounded AI assistance</strong><small>Answers from your records</small></div></section>
