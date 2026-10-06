@@ -497,12 +497,22 @@ function Dialog({ type, submitted, forgotPassword, authError, onGoogleSignIn, on
       })
       googleIdentityInitialized = true
     }
-    element.replaceChildren()
-    window.google.accounts.id.renderButton(element, {
-      theme: 'outline',
-      size: 'large',
-      width: 320,
-    })
+    let renderedWidth = 0
+    const renderButton = () => {
+      const width = Math.min(320, Math.floor(element.clientWidth))
+      if (width < 1 || width === renderedWidth) return
+      renderedWidth = width
+      element.replaceChildren()
+      window.google?.accounts.id.renderButton(element, {
+        theme: 'outline',
+        size: 'large',
+        width,
+      })
+    }
+    const observer = new ResizeObserver(renderButton)
+    observer.observe(element)
+    renderButton()
+    return () => observer.disconnect()
   }, [onGoogleSignIn])
   const register = type === 'register'
   const resetSent = forgotPassword && submitted
@@ -561,7 +571,7 @@ function Dialog({ type, submitted, forgotPassword, authError, onGoogleSignIn, on
         if (event.target === event.currentTarget) onClose()
       }}
     >
-      <form className={register ? 'dialog registration-dialog' : 'dialog'} onSubmit={onSubmit}>
+      <form className={register ? 'dialog registration-dialog' : 'dialog signin-dialog'} onSubmit={onSubmit}>
         <button type="button" className="dialog-close" onClick={onClose} aria-label="Close">
           <X size={18} />
         </button>
@@ -757,6 +767,12 @@ function Dialog({ type, submitted, forgotPassword, authError, onGoogleSignIn, on
           </>
         ) : (
           <>
+            <div className="signin-intro">
+              <span className="signin-mark"><Leaf size={19} /></span>
+              <p className="signin-kicker">ECOROUTE ACCOUNT</p>
+              <h2>{forgotPassword ? 'Reset your password' : 'Welcome back'}</h2>
+              <p>{forgotPassword ? 'Enter your email and we’ll send a secure reset link.' : 'Sign in to manage your service and stay on route.'}</p>
+            </div>
             {!register && (
               <div className="signin-fields">
                 {forgotPassword ? (

@@ -105,9 +105,39 @@
 .dialog:not(.registration-dialog) .hero-primary:disabled { cursor: not-allowed; opacity: .45; }
 .google-signin { width: 100%; display: flex; align-items: center; justify-content: center; gap: 9px; height: 40px; margin-top: 4px; border: 1px solid #dce8dc; border-radius: 6px; color: #315441; background: #fff; font-size: 11px; font-weight: 700; }
 .google-signin:hover { border-color: #9bc5a4; background: #f6fbf6; }
-.google-signin span { width: 19px; height: 19px; display: grid; place-items: center; border-radius: 50%; color: #4285f4; font: 700 14px Arial, sans-serif; }
+.google-signin > button span { width: 19px; height: 19px; display: grid; place-items: center; border-radius: 50%; color: #4285f4; font: 700 14px Arial, sans-serif; }
 .signin-divider { display: flex; align-items: center; gap: 10px; margin: 17px 0 13px; color: #9aa9a0; font-size: 10px; }
 .signin-divider::before, .signin-divider::after { content: ''; height: 1px; flex: 1; background: #e4eae5; }
+.signin-dialog { width: min(100%, 460px); padding: 34px; border: 1px solid rgba(222,235,223,.95); border-radius: 18px; background: linear-gradient(150deg, #fff 0%, #fbfdf9 100%); box-shadow: 0 30px 90px rgba(13,42,35,.2); }
+.signin-dialog::before { content: ''; position: absolute; top: 0; right: 28px; left: 28px; height: 3px; border-radius: 0 0 4px 4px; background: linear-gradient(90deg, #34835d, #a9d783); }
+.signin-intro { padding: 7px 0 23px; }
+.signin-mark { width: 43px; height: 43px; display: grid; place-items: center; margin-bottom: 17px; border: 1px solid #dcecdf; border-radius: 13px; color: #347a56; background: #edf7ef; }
+.signin-kicker { margin: 0 0 7px; color: #55906a; font-size: 9px; font-weight: 800; letter-spacing: 1.25px; }
+.signin-intro h2 { font-size: 27px; letter-spacing: -.8px; }
+.signin-intro > p:last-child { margin: 8px 0 0; color: #7e8f84; font-size: 12px; line-height: 1.6; }
+.signin-dialog .dialog-close { top: 18px; right: 18px; width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid #e7eee7; border-radius: 10px; background: #fff; }
+.signin-dialog .signin-fields { gap: 15px; }
+.signin-dialog .signin-fields label { gap: 8px; margin: 0; color: #526b5b; font-size: 11px; font-weight: 700; }
+.signin-dialog .signin-fields input { height: 47px; padding: 0 14px; border-color: #dce7dd; border-radius: 9px; background: #fff; font: 500 13px 'DM Sans', sans-serif; transition: border-color .18s, box-shadow .18s; }
+.signin-dialog .signin-fields input:focus { border-color: #5b9b70; box-shadow: 0 0 0 4px rgba(91,155,112,.12); }
+.signin-dialog .google-signin { height: 46px; margin-top: 20px; border-color: #dce7dd; border-radius: 9px; color: #345442; font-size: 12px; }
+.signin-dialog .google-signin > button span { width: 21px; height: 21px; }
+.signin-dialog .google-signin > div { width: 100% !important; max-width: 100%; }
+.signin-dialog .signin-divider { margin: 19px 0 17px; font-size: 10px; }
+.signin-dialog .signin-terms { display: flex; align-items: flex-start; gap: 9px; margin: 18px 0 0; color: #728278; font-size: 10px; font-weight: 500; line-height: 1.55; }
+.signin-dialog .signin-terms input { width: 15px; height: 15px; flex: 0 0 15px; margin: 1px 0 0; accent-color: #39845d; }
+.signin-dialog .signin-terms a { color: #347a56; font-weight: 700; text-underline-offset: 2px; }
+.signin-dialog .dialog-actions { align-items: center; justify-content: flex-start; gap: 18px; margin-top: 21px; }
+.signin-dialog .dialog-actions .hero-primary { min-height: 43px; order: 1; padding: 0 18px; border-radius: 9px; }
+.signin-dialog .dialog-actions .dialog-cancel { order: 2; font-size: 11px; }
+.signin-dialog .forgot-link { margin: 15px 0 0; color: #397e59; font-size: 11px; }
+.signin-dialog .auth-error { font-size: 11px; }
+@media (max-width: 560px) {
+  .signin-dialog { width: min(100%, 460px); padding: 28px 23px 23px; border-radius: 15px; }
+  .signin-intro { padding: 3px 0 20px; }
+  .signin-intro h2 { font-size: 25px; }
+  .signin-dialog .dialog-actions { flex-wrap: wrap; gap: 12px 16px; }
+}
 .customer-register-dialog { width: min(100%, 720px); }
 .customer-registration-steps { margin-bottom: 22px; }
 .customer-registration-steps .registration-step.active, .customer-registration-steps .registration-step.complete { color: #315b43; }
