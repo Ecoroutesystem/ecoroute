@@ -24,7 +24,7 @@ type Summary = {
   pendingCompanyRecords: Array<{ id: string; name: string; location: string }>
 }
 
-const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
+const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5001'
 const numberFormat = new Intl.NumberFormat('en-RW')
 const currencyFormat = new Intl.NumberFormat('en-RW', { style: 'currency', currency: 'RWF', maximumFractionDigits: 0 })
 const shortDate = new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' })

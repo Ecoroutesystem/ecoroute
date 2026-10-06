@@ -5,7 +5,7 @@ import './App.css'
 type Customer = { id: string; name: string; phone?: string; location: string; plan: string; balance: string; status: string }
 type Collection = { id: string; time: string; date: string; address: string; customer: string; driver: string; vehicle: string; status: string }
 type Message = { id: string; customerId: string; customer?: string; senderRole: 'customer' | 'company'; body: string; sentAt: string }
-const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
+const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5001'
 const formatDate = (value: string) => new Date(value).toLocaleDateString('en-RW', { day: 'numeric', month: 'short', year: 'numeric' })
 const formatTime = (value: string) => new Date(value).toLocaleTimeString('en-RW', { hour: 'numeric', minute: '2-digit' })
 

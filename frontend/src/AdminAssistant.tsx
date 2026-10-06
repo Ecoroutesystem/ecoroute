@@ -6,7 +6,7 @@ type AdminAssistantProps = { token: string }
 type Message = { role: 'assistant' | 'user'; text: string }
 type AssistantResponse = { answer?: string; error?: string; model?: string; asOf?: string }
 
-const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
+const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5001'
 const suggestions = [
   { title: 'Today at a glance', prompt: 'Summarize today\'s collections and current company approvals.' },
   { title: 'Payment pulse', prompt: 'How are payments performing this month? Include the total and payment methods.' },

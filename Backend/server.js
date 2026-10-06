@@ -28,6 +28,7 @@ const pool = new Pool({
 const hashPassword = (value) => crypto.createHash('sha256').update(String(value)).digest('hex');
 const adminTokenSecret = process.env.ADMIN_TOKEN_SECRET || hashPassword(adminPassword);
 const companyTokenSecret = process.env.COMPANY_TOKEN_SECRET || hashPassword(`company:${adminPassword}`);
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function createAdminToken(user) {
   const payload = Buffer.from(JSON.stringify({
@@ -246,10 +247,10 @@ async function initializeDatabase() {
   `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS company_vehicles (
-      id SERIAL PRIMARY KEY,
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
       plate_number VARCHAR(100) NOT NULL,
-      vehicle_type VARCHAR(100) NOT NULL,
+      type VARCHAR(100) NOT NULL,
       capacity VARCHAR(100) NOT NULL,
       status VARCHAR(30) NOT NULL DEFAULT 'Available',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -257,27 +258,50 @@ async function initializeDatabase() {
     );
   `);
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS company_staff (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      vehicle_id UUID REFERENCES company_vehicles(id) ON DELETE SET NULL,
+      name VARCHAR(255) NOT NULL,
+      phone VARCHAR(255),
+      position VARCHAR(100) NOT NULL,
+      hire_date DATE,
+      status VARCHAR(30) NOT NULL DEFAULT 'Active',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await pool.query('ALTER TABLE company_staff ADD COLUMN IF NOT EXISTS employee_user_id INTEGER UNIQUE REFERENCES users(id) ON DELETE SET NULL;');
+  await pool.query(`
+    INSERT INTO company_staff (company_id, name, phone, position, status, employee_user_id)
+    SELECT e.company_id, u.full_name, u.phone, e.role, e.status, u.id
+    FROM company_employees e JOIN users u ON u.id = e.user_id
+    ON CONFLICT (employee_user_id) DO UPDATE SET
+      company_id = EXCLUDED.company_id, name = EXCLUDED.name, phone = EXCLUDED.phone,
+      position = EXCLUDED.position, status = EXCLUDED.status
+  `);
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS company_routes (
-      id SERIAL PRIMARY KEY,
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
       name VARCHAR(255) NOT NULL,
       area VARCHAR(255) NOT NULL,
-      route_date DATE NOT NULL,
-      staff_id INTEGER REFERENCES company_employees(id) ON DELETE SET NULL,
-      vehicle_id INTEGER REFERENCES company_vehicles(id) ON DELETE SET NULL,
+      service_date DATE NOT NULL,
+      staff_id UUID REFERENCES company_staff(id) ON DELETE SET NULL,
+      vehicle_id UUID REFERENCES company_vehicles(id) ON DELETE SET NULL,
       status VARCHAR(30) NOT NULL DEFAULT 'Planned' CHECK (status IN ('Planned', 'In Progress', 'Completed')),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
   await pool.query('ALTER TABLE collections ADD COLUMN IF NOT EXISTS company_id UUID REFERENCES companies(id);');
-  await pool.query('ALTER TABLE collections ADD COLUMN IF NOT EXISTS route_id INTEGER REFERENCES company_routes(id) ON DELETE SET NULL;');
+  await pool.query('ALTER TABLE collections ADD COLUMN IF NOT EXISTS route_id UUID REFERENCES company_routes(id) ON DELETE SET NULL;');
+  await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS balance_amount NUMERIC NOT NULL DEFAULT 0;');
   await pool.query("ALTER TABLE customers ADD COLUMN IF NOT EXISTS customer_type VARCHAR(100) NOT NULL DEFAULT 'Household';");
   await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS pricing_rule_id INTEGER REFERENCES company_pricing_rules(id);');
   await pool.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS company_id UUID REFERENCES companies(id);');
   await pool.query(`
     CREATE TABLE IF NOT EXISTS payments (
-      id SERIAL PRIMARY KEY,
-      customer_id INTEGER NOT NULL REFERENCES customers(id),
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      customer_id UUID NOT NULL REFERENCES customers(id),
       amount NUMERIC NOT NULL CHECK (amount > 0),
       method VARCHAR(100) NOT NULL,
       reference VARCHAR(255) UNIQUE NOT NULL,
@@ -328,7 +352,7 @@ app.get('/health', async (_req, res) => {
   }
 });
 
-app.get('/api/dashboard/summary', async (_req, res) => {
+app.get('/api/dashboard/summary', requireAdmin, async (_req, res) => {
   try {
     const [companySummary, customerSummary, collectionSummary, weeklyCollections, recentCollections, paymentSummary, recentPayments, pendingCompanyRows] = await Promise.all([
       pool.query(`
@@ -340,13 +364,13 @@ app.get('/api/dashboard/summary', async (_req, res) => {
       `),
       pool.query(`
         SELECT COUNT(*) FILTER (WHERE COALESCE(status, 'Active') = 'Active')::int AS active,
-          COUNT(*) FILTER (WHERE COALESCE(balance, 0) > 0)::int AS accounts_with_balance,
-          COALESCE(SUM(balance), 0)::numeric AS outstanding_balance
+          COUNT(*) FILTER (WHERE COALESCE(balance_amount, 0) > 0)::int AS accounts_with_balance,
+          COALESCE(SUM(balance_amount), 0)::numeric AS outstanding_balance
         FROM customers
       `),
       pool.query(`
-        SELECT COUNT(*) FILTER (WHERE COALESCE(collection_date, created_at::date) = CURRENT_DATE)::int AS today,
-          COUNT(*) FILTER (WHERE COALESCE(collection_date, created_at::date) >= CURRENT_DATE - INTERVAL '6 days'
+        SELECT COUNT(*) FILTER (WHERE COALESCE(date, created_at::date) = CURRENT_DATE)::int AS today,
+          COUNT(*) FILTER (WHERE COALESCE(date, created_at::date) >= CURRENT_DATE - INTERVAL '6 days'
             AND status = 'Completed')::int AS completed_this_week
         FROM collections
       `),
@@ -358,15 +382,15 @@ app.get('/api/dashboard/summary', async (_req, res) => {
           COUNT(collections.id)::int AS total,
           COUNT(collections.id) FILTER (WHERE collections.status = 'Completed')::int AS completed
         FROM days
-        LEFT JOIN collections ON COALESCE(collections.collection_date, collections.created_at::date) = days.day
+        LEFT JOIN collections ON COALESCE(collections.date, collections.created_at::date) = days.day
         GROUP BY days.day
         ORDER BY days.day
       `),
       pool.query(`
-        SELECT id, customer, address, driver, collection_time AS time, status,
-          TO_CHAR(COALESCE(collection_date, created_at::date), 'YYYY-MM-DD') AS date
+        SELECT id, customer, address, driver, time, status,
+          TO_CHAR(COALESCE(date, created_at::date), 'YYYY-MM-DD') AS date
         FROM collections
-        ORDER BY COALESCE(collection_date, created_at::date) DESC, collection_time DESC NULLS LAST, created_at DESC
+        ORDER BY COALESCE(date, created_at::date) DESC, time DESC NULLS LAST, created_at DESC
         LIMIT 6
       `),
       pool.query(`
@@ -516,17 +540,17 @@ app.post('/api/admin/assistant', requireAdmin, async (req, res) => {
         COUNT(*) FILTER (WHERE status = 'Cancelled')::int AS cancelled FROM companies`),
       pool.query(`SELECT COUNT(*)::int AS total,
         COUNT(*) FILTER (WHERE COALESCE(status, 'Active') = 'Active')::int AS active,
-        COUNT(*) FILTER (WHERE COALESCE(balance, 0) > 0)::int AS with_balance,
-        COALESCE(SUM(balance), 0)::numeric AS outstanding FROM customers`),
+        COUNT(*) FILTER (WHERE COALESCE(balance_amount, 0) > 0)::int AS with_balance,
+        COALESCE(SUM(balance_amount), 0)::numeric AS outstanding FROM customers`),
       pool.query(`SELECT COUNT(*)::int AS total,
-        COUNT(*) FILTER (WHERE COALESCE(collection_date, created_at::date) = CURRENT_DATE)::int AS today,
+        COUNT(*) FILTER (WHERE COALESCE(date, created_at::date) = CURRENT_DATE)::int AS today,
         COUNT(*) FILTER (WHERE status = 'Completed')::int AS completed,
         COUNT(*) FILTER (WHERE status = 'Missed')::int AS missed FROM collections`),
       pool.query(`SELECT COUNT(*)::int AS count, COALESCE(SUM(amount), 0)::numeric AS total
         FROM payments WHERE paid_at >= DATE_TRUNC('month', CURRENT_DATE)`),
-      pool.query(`SELECT TO_CHAR(collection_date, 'YYYY-MM-DD') AS date, COUNT(*)::int AS count
-        FROM collections WHERE collection_date >= CURRENT_DATE AND collection_date < CURRENT_DATE + INTERVAL '8 days'
-        GROUP BY collection_date ORDER BY collection_date`),
+      pool.query(`SELECT TO_CHAR(date, 'YYYY-MM-DD') AS date, COUNT(*)::int AS count
+        FROM collections WHERE date >= CURRENT_DATE AND date < CURRENT_DATE + INTERVAL '8 days'
+        GROUP BY date ORDER BY date`),
       pool.query(`SELECT method, COUNT(*)::int AS count, COALESCE(SUM(amount), 0)::numeric AS total
         FROM payments WHERE paid_at >= DATE_TRUNC('month', CURRENT_DATE)
         GROUP BY method ORDER BY total DESC`),
@@ -738,9 +762,9 @@ app.post('/api/auth/register', async (req, res) => {
     const customerResult = await client.query(
       `INSERT INTO customers (
         user_id, company_id, pricing_rule_id, customer_type, name, phone, location, province, district, sector, street, latitude, longitude,
-        plan, balance, status
+        plan, balance, balance_amount, status
        ) VALUES ($1, $2, $3, 'Household', $4, $5, $6, $7, $8, $9, $10, $11, $12,
-         $13, $14, 'Active')
+         $13, 'RWF ' || TO_CHAR($14::numeric, 'FM999G999G999G990'), $14, 'Active')
        RETURNING id`,
       [userId, company?.id ?? null, householdRule?.id ?? null, fullName, phone,
         [street, sector, district, province].join(', '), province, district, sector, street, latitude, longitude,
@@ -808,18 +832,18 @@ app.post('/api/auth/google', async (req, res) => {
 app.get('/api/customers', companyScopedAccess, async (req, res) => {
   try {
     const customerId = String(req.query.customerId ?? '').trim();
-    const companyId = String(req.query.companyId ?? '').trim();
-    if (customerId && !/^\d+$/.test(customerId)) {
-      return res.status(400).json({ error: 'Customer ID must be a positive integer.' });
+    const companyId = req.company?.companyId ?? String(req.query.companyId ?? '').trim();
+    if (customerId && !uuidPattern.test(customerId)) {
+      return res.status(400).json({ error: 'Customer ID must be a UUID.' });
     }
     const filters = [];
     const values = [];
-    if (customerId) { values.push(Number(customerId)); filters.push(`id = $${values.length}`); }
+    if (customerId) { values.push(customerId); filters.push(`id = $${values.length}`); }
     if (companyId) { values.push(companyId); filters.push(`company_id = $${values.length}`); }
 
     const result = await pool.query(
       `SELECT id::text AS id, name, phone, location, latitude, longitude, plan, customer_type AS "customerType",
-        'RWF ' || TO_CHAR(COALESCE(balance, 0), 'FM999G999G999G990') AS balance, status
+        'RWF ' || TO_CHAR(COALESCE(balance_amount, 0), 'FM999G999G999G990') AS balance, status
        FROM customers
        ${filters.length ? `WHERE ${filters.join(' AND ')}` : ''}
        ORDER BY name ASC`,
@@ -852,10 +876,10 @@ app.post('/api/customers', requireCompany, requireOwnCompanyScope, async (req, r
     if (!pricing.rowCount) return res.status(400).json({ error: `Add an active ${customerType} pricing rule before creating this customer.` });
 
     const result = await pool.query(
-      `INSERT INTO customers (company_id, pricing_rule_id, customer_type, name, phone, location, plan, balance, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Active')
+      `INSERT INTO customers (company_id, pricing_rule_id, customer_type, name, phone, location, plan, balance, balance_amount, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'RWF ' || TO_CHAR($8, 'FM999G999G999G990'), $8, 'Active')
        RETURNING id::text AS id, name, phone, location, plan, customer_type AS "customerType",
-         'RWF ' || TO_CHAR(COALESCE(balance, 0), 'FM999G999G999G990') AS balance, status`,
+         'RWF ' || TO_CHAR(COALESCE(balance_amount, 0), 'FM999G999G999G990') AS balance, status`,
       [companyId, pricing.rows[0].id, customerType, name, phone || null, location, plan, pricing.rows[0].amount]
     );
     return res.status(201).json(result.rows[0]);
@@ -869,8 +893,8 @@ app.patch('/api/customers/:id', requireCompany, requireOwnCompanyScope, async (r
     const customerId = String(req.params.id ?? '').trim();
     const companyId = String(req.body?.companyId ?? '').trim();
     const status = String(req.body?.status ?? '').trim();
-    if (!/^\d+$/.test(customerId) || !companyId) {
-      return res.status(400).json({ error: 'Customer ID must be a positive integer.' });
+    if (!uuidPattern.test(customerId) || !companyId) {
+      return res.status(400).json({ error: 'A valid customer UUID and company are required.' });
     }
     if (!['Active', 'Suspended', 'Archived'].includes(status)) {
       return res.status(400).json({ error: 'Customer status is not valid.' });
@@ -879,8 +903,8 @@ app.patch('/api/customers/:id', requireCompany, requireOwnCompanyScope, async (r
     const result = await pool.query(
       `UPDATE customers SET status = $1 WHERE id = $2 AND company_id = $3
        RETURNING id::text AS id, name, phone, location, plan,
-         'RWF ' || TO_CHAR(COALESCE(balance, 0), 'FM999G999G999G990') AS balance, status`,
-      [status, Number(customerId), companyId]
+         'RWF ' || TO_CHAR(COALESCE(balance_amount, 0), 'FM999G999G999G990') AS balance, status`,
+      [status, customerId, companyId]
     );
     if (!result.rowCount) return res.status(404).json({ error: 'Customer was not found.' });
     return res.json(result.rows[0]);
@@ -893,11 +917,11 @@ app.delete('/api/customers/:id', requireCompany, requireOwnCompanyScope, async (
   try {
     const customerId = String(req.params.id ?? '').trim();
     const companyId = String(req.query.companyId ?? '').trim();
-    if (!/^\d+$/.test(customerId) || !companyId) {
-      return res.status(400).json({ error: 'Customer ID must be a positive integer.' });
+    if (!uuidPattern.test(customerId) || !companyId) {
+      return res.status(400).json({ error: 'A valid customer UUID and company are required.' });
     }
 
-    const result = await pool.query('DELETE FROM customers WHERE id = $1 AND company_id = $2 RETURNING id', [Number(customerId), companyId]);
+    const result = await pool.query('DELETE FROM customers WHERE id = $1 AND company_id = $2 RETURNING id', [customerId, companyId]);
     if (!result.rowCount) return res.status(404).json({ error: 'Customer was not found.' });
     return res.json({ message: 'Customer deleted successfully.' });
   } catch (error) {
@@ -911,14 +935,14 @@ app.delete('/api/customers/:id', requireCompany, requireOwnCompanyScope, async (
 app.get('/api/payments', companyScopedAccess, async (req, res) => {
   try {
     const customerId = String(req.query.customerId ?? '').trim();
-    const companyId = String(req.query.companyId ?? '').trim();
-    if (customerId && !/^\d+$/.test(customerId)) {
-      return res.status(400).json({ error: 'Customer ID must be a positive integer.' });
+    const companyId = req.company?.companyId ?? String(req.query.companyId ?? '').trim();
+    if (customerId && !uuidPattern.test(customerId)) {
+      return res.status(400).json({ error: 'Customer ID must be a UUID.' });
     }
 
     const filters = [];
     const values = [];
-    if (customerId) { values.push(Number(customerId)); filters.push(`p.customer_id = $${values.length}`); }
+    if (customerId) { values.push(customerId); filters.push(`p.customer_id = $${values.length}`); }
     if (companyId) { values.push(companyId); filters.push(`c.company_id = $${values.length}`); }
     const result = await pool.query(
       `SELECT p.id::text AS id, p.customer_id::text AS "customerId", c.name AS customer,
@@ -943,21 +967,21 @@ app.post('/api/payments', requireCompany, requireOwnCompanyScope, async (req, re
     const companyId = String(req.body?.companyId ?? '').trim();
     const amount = Number(req.body?.amount);
     const method = String(req.body?.method ?? '').trim();
-    const paymentMethods = ['MTN Mobile Money', 'Airtel Money', 'Cash', 'Bank transfer', 'Card'];
-    if (!/^\d+$/.test(customerId) || !companyId || !Number.isSafeInteger(amount) || amount <= 0 || !paymentMethods.includes(method)) {
-      return res.status(400).json({ error: 'A valid company, customer, positive whole-number amount and payment method are required.' });
+    const paymentMethods = ['Mobile money', 'MTN Mobile Money', 'Airtel Money', 'Cash', 'Bank transfer', 'Card'];
+    if (!uuidPattern.test(customerId) || !companyId || !Number.isSafeInteger(amount) || amount <= 0 || !paymentMethods.includes(method)) {
+      return res.status(400).json({ error: 'A valid company, customer UUID, positive whole-number amount and payment method are required.' });
     }
 
     await client.query('BEGIN');
     const customerResult = await client.query(
-      'SELECT id, balance FROM customers WHERE id = $1 AND company_id = $2 FOR UPDATE',
-      [Number(customerId), companyId]
+      'SELECT id, balance_amount FROM customers WHERE id = $1 AND company_id = $2 FOR UPDATE',
+      [customerId, companyId]
     );
     if (!customerResult.rowCount) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Customer was not found.' });
     }
-    const balance = Number(customerResult.rows[0].balance ?? 0);
+    const balance = Number(customerResult.rows[0].balance_amount ?? 0);
     if (amount > balance) {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Payment cannot be greater than the outstanding balance.' });
@@ -969,10 +993,14 @@ app.post('/api/payments', requireCompany, requireOwnCompanyScope, async (req, re
        VALUES ($1, $2, $3, $4)
        RETURNING id::text AS id, customer_id::text AS "customerId",
          amount::double precision AS amount, method, reference, paid_at AS "paidAt"`,
-      [Number(customerId), amount, method, reference]
+      [customerId, amount, method, reference]
     );
-    await client.query('UPDATE customers SET balance = COALESCE(balance, 0) - $1 WHERE id = $2', [amount, Number(customerId)]);
-    const customer = await client.query('SELECT name AS customer FROM customers WHERE id = $1', [Number(customerId)]);
+    await client.query(
+      `UPDATE customers SET balance_amount = COALESCE(balance_amount, 0) - $1,
+        balance = 'RWF ' || TO_CHAR(COALESCE(balance_amount, 0) - $1, 'FM999G999G999G990') WHERE id = $2`,
+      [amount, customerId]
+    );
+    const customer = await client.query('SELECT name AS customer FROM customers WHERE id = $1', [customerId]);
     await client.query('COMMIT');
     return res.status(201).json({ ...paymentResult.rows[0], customer: customer.rows[0].customer });
   } catch (error) {
@@ -983,21 +1011,25 @@ app.post('/api/payments', requireCompany, requireOwnCompanyScope, async (req, re
   }
 });
 
-app.get('/api/collections', async (_req, res) => {
+app.get('/api/collections', companyScopedAccess, async (req, res) => {
   try {
+    const values = [];
+    const companyFilter = req.company ? 'WHERE company_id = $1' : '';
+    if (req.company) values.push(req.company.companyId);
     const result = await pool.query(`
       SELECT id::text AS id,
-        COALESCE(TO_CHAR(collection_time, 'HH24:MI'), '') AS time,
-        TO_CHAR(COALESCE(collection_date, created_at::date), 'YYYY-MM-DD') AS date,
+        COALESCE(time, '') AS time,
+        TO_CHAR(COALESCE(date, created_at::date), 'YYYY-MM-DD') AS date,
         COALESCE(address, '') AS address,
         COALESCE(customer, '') AS customer,
         COALESCE(driver, 'Unassigned') AS driver,
         COALESCE(vehicle, 'Unassigned') AS vehicle,
         COALESCE(status, 'Scheduled') AS status
       FROM collections
-      ORDER BY COALESCE(collection_date, created_at::date) DESC,
-        collection_time DESC NULLS LAST, id DESC
-    `);
+      ${companyFilter}
+      ORDER BY COALESCE(date, created_at::date) DESC,
+        time DESC NULLS LAST, id DESC
+    `, values);
     return res.json(result.rows);
   } catch (error) {
     return res.status(500).json({ error: 'Could not load collections.', details: error.message });
@@ -1007,7 +1039,7 @@ app.get('/api/collections', async (_req, res) => {
 app.get('/api/company/vehicles', requireCompany, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id::text AS id, plate_number AS "plateNumber", vehicle_type AS type,
+      `SELECT id::text AS id, plate_number AS "plateNumber", type,
         capacity, status FROM company_vehicles
        WHERE company_id = $1 ORDER BY created_at DESC, id DESC`,
       [req.company.companyId]
@@ -1028,9 +1060,9 @@ app.post('/api/company/vehicles', requireCompany, async (req, res) => {
       return res.status(400).json({ error: 'Plate number, vehicle type, capacity and a valid status are required.' });
     }
     const result = await pool.query(
-      `INSERT INTO company_vehicles (company_id, plate_number, vehicle_type, capacity, status)
+      `INSERT INTO company_vehicles (company_id, plate_number, type, capacity, status)
        VALUES ($1, $2, $3, $4, $5)
-       RETURNING id::text AS id, plate_number AS "plateNumber", vehicle_type AS type, capacity, status`,
+       RETURNING id::text AS id, plate_number AS "plateNumber", type, capacity, status`,
       [req.company.companyId, plateNumber, type, capacity, status]
     );
     return res.status(201).json(result.rows[0]);
@@ -1044,13 +1076,13 @@ app.get('/api/company/collections', requireCompany, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT id::text AS id,
-        COALESCE(TO_CHAR(collection_time, 'HH24:MI'), '') AS time,
-        TO_CHAR(COALESCE(collection_date, created_at::date), 'YYYY-MM-DD') AS date,
+        COALESCE(time, '') AS time,
+        TO_CHAR(COALESCE(date, created_at::date), 'YYYY-MM-DD') AS date,
         COALESCE(address, '') AS address, COALESCE(customer, '') AS customer,
         COALESCE(driver, 'Unassigned') AS driver, COALESCE(vehicle, 'Unassigned') AS vehicle,
         COALESCE(status, 'Scheduled') AS status
        FROM collections WHERE company_id = $1
-       ORDER BY COALESCE(collection_date, created_at::date) DESC, collection_time DESC NULLS LAST, id DESC`,
+       ORDER BY COALESCE(date, created_at::date) DESC, time DESC NULLS LAST, id DESC`,
       [req.company.companyId]
     );
     return res.json(result.rows);
@@ -1071,10 +1103,10 @@ app.post('/api/company/collections', requireCompany, async (req, res) => {
       return res.status(400).json({ error: 'Customer, address, date and time are required.' });
     }
     const result = await pool.query(
-      `INSERT INTO collections (company_id, customer, address, driver, vehicle, collection_date, collection_time, status)
-       VALUES ($1, $2, $3, $4, $5, $6::date, $7::time, 'Scheduled')
-       RETURNING id::text AS id, TO_CHAR(collection_time, 'HH24:MI') AS time,
-         TO_CHAR(collection_date, 'YYYY-MM-DD') AS date, address, customer, driver, vehicle, status`,
+      `INSERT INTO collections (company_id, customer, address, driver, vehicle, date, time, status)
+       VALUES ($1, $2, $3, $4, $5, $6::date, $7, 'Scheduled')
+       RETURNING id::text AS id, time,
+         TO_CHAR(date, 'YYYY-MM-DD') AS date, address, customer, driver, vehicle, status`,
       [req.company.companyId, customer, address, driver || 'Unassigned', vehicle || 'Unassigned', date, time]
     );
     return res.status(201).json(result.rows[0]);
@@ -1086,16 +1118,16 @@ app.post('/api/company/collections', requireCompany, async (req, res) => {
 app.patch('/api/company/collections/:id/status', requireCompany, async (req, res) => {
   try {
     const status = String(req.body?.status ?? '').trim();
-    if (!/^\d+$/.test(req.params.id) || !['Scheduled', 'In Progress', 'Completed', 'Missed', 'Cancelled'].includes(status)) {
+    if (!uuidPattern.test(req.params.id) || !['Scheduled', 'In Progress', 'Completed', 'Missed', 'Cancelled'].includes(status)) {
       return res.status(400).json({ error: 'A valid collection ID and status are required.' });
     }
     const result = await pool.query(
       `UPDATE collections SET status = $1 WHERE id = $2 AND company_id = $3
-       RETURNING id::text AS id, COALESCE(TO_CHAR(collection_time, 'HH24:MI'), '') AS time,
-         TO_CHAR(COALESCE(collection_date, created_at::date), 'YYYY-MM-DD') AS date,
+       RETURNING id::text AS id, COALESCE(time, '') AS time,
+         TO_CHAR(COALESCE(date, created_at::date), 'YYYY-MM-DD') AS date,
          COALESCE(address, '') AS address, COALESCE(customer, '') AS customer,
          COALESCE(driver, 'Unassigned') AS driver, COALESCE(vehicle, 'Unassigned') AS vehicle, status`,
-      [status, Number(req.params.id), req.company.companyId]
+      [status, req.params.id, req.company.companyId]
     );
     if (!result.rowCount) return res.status(404).json({ error: 'Collection was not found.' });
     return res.json(result.rows[0]);
@@ -1106,10 +1138,10 @@ app.patch('/api/company/collections/:id/status', requireCompany, async (req, res
 
 app.delete('/api/company/collections/:id', requireCompany, async (req, res) => {
   try {
-    if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'Collection ID must be a positive integer.' });
+    if (!uuidPattern.test(req.params.id)) return res.status(400).json({ error: 'Collection ID must be a UUID.' });
     const result = await pool.query(
       'DELETE FROM collections WHERE id = $1 AND company_id = $2 RETURNING id',
-      [Number(req.params.id), req.company.companyId]
+      [req.params.id, req.company.companyId]
     );
     if (!result.rowCount) return res.status(404).json({ error: 'Collection was not found.' });
     return res.json({ message: 'Collection deleted successfully.' });
@@ -1123,35 +1155,33 @@ app.get('/api/company/routes', requireCompany, async (req, res) => {
     const companyId = req.company.companyId;
     const [routeResult, unassignedResult, staffResult, vehicleResult] = await Promise.all([
       pool.query(
-        `SELECT r.id::text AS id, r.name, r.area, TO_CHAR(r.route_date, 'YYYY-MM-DD') AS date,
-          r.status, r.staff_id::text AS "staffId", u.full_name AS "staffName",
+        `SELECT r.id::text AS id, r.name, r.area, TO_CHAR(r.service_date, 'YYYY-MM-DD') AS date,
+          r.status, r.staff_id::text AS "staffId", s.name AS "staffName",
           r.vehicle_id::text AS "vehicleId", v.plate_number AS vehicle
          FROM company_routes r
-         LEFT JOIN company_employees e ON e.id = r.staff_id AND e.company_id = r.company_id
-         LEFT JOIN users u ON u.id = e.user_id
+         LEFT JOIN company_staff s ON s.id = r.staff_id AND s.company_id = r.company_id
          LEFT JOIN company_vehicles v ON v.id = r.vehicle_id AND v.company_id = r.company_id
-         WHERE r.company_id = $1 ORDER BY r.route_date, r.id`,
+         WHERE r.company_id = $1 ORDER BY r.service_date, r.id`,
         [companyId]
       ),
       pool.query(
         `SELECT c.id::text AS id, COALESCE(c.customer, '') AS customer,
           COALESCE(c.address, '') AS address,
-          TO_CHAR(COALESCE(c.collection_date, c.created_at::date), 'YYYY-MM-DD') AS date,
-          COALESCE(TO_CHAR(c.collection_time, 'HH24:MI'), '') AS time,
+          TO_CHAR(COALESCE(c.date, c.created_at::date), 'YYYY-MM-DD') AS date,
+          COALESCE(c.time, '') AS time,
           COALESCE(c.status, 'Scheduled') AS status
          FROM collections c WHERE c.company_id = $1 AND c.route_id IS NULL
            AND COALESCE(c.status, 'Scheduled') = 'Scheduled'
-         ORDER BY COALESCE(c.collection_date, c.created_at::date), c.collection_time NULLS LAST, c.id`,
+         ORDER BY COALESCE(c.date, c.created_at::date), c.time NULLS LAST, c.id`,
         [companyId]
       ),
       pool.query(
-        `SELECT e.id::text AS id, u.full_name AS name, e.role AS position
-         FROM company_employees e JOIN users u ON u.id = e.user_id
-         WHERE e.company_id = $1 AND e.status = 'Active' ORDER BY u.full_name`,
+        `SELECT s.id::text AS id, s.name, s.position
+         FROM company_staff s WHERE s.company_id = $1 AND s.status = 'Active' ORDER BY s.name`,
         [companyId]
       ),
       pool.query(
-        `SELECT id::text AS id, plate_number AS "plateNumber", vehicle_type AS type
+        `SELECT id::text AS id, plate_number AS "plateNumber", type
          FROM company_vehicles WHERE company_id = $1 AND status = 'Available' ORDER BY plate_number`,
         [companyId]
       ),
@@ -1161,12 +1191,12 @@ app.get('/api/company/routes', requireCompany, async (req, res) => {
       ? await pool.query(
         `SELECT route_id::text AS "routeId", id::text AS id, COALESCE(customer, '') AS customer,
           COALESCE(address, '') AS address,
-          TO_CHAR(COALESCE(collection_date, created_at::date), 'YYYY-MM-DD') AS date,
-          COALESCE(TO_CHAR(collection_time, 'HH24:MI'), '') AS time,
+          TO_CHAR(COALESCE(date, created_at::date), 'YYYY-MM-DD') AS date,
+          COALESCE(time, '') AS time,
           COALESCE(status, 'Scheduled') AS status
-         FROM collections WHERE company_id = $1 AND route_id = ANY($2::integer[])
-         ORDER BY COALESCE(collection_date, created_at::date), collection_time NULLS LAST, id`,
-        [companyId, routeIds.map(Number)]
+         FROM collections WHERE company_id = $1 AND route_id = ANY($2::uuid[])
+         ORDER BY COALESCE(date, created_at::date), time NULLS LAST, id`,
+        [companyId, routeIds]
       )
       : { rows: [] };
     const stopsByRoute = new Map();
@@ -1196,43 +1226,43 @@ app.post('/api/company/routes', requireCompany, async (req, res) => {
     const staffId = req.body?.staffId ? String(req.body.staffId) : null;
     const vehicleId = req.body?.vehicleId ? String(req.body.vehicleId) : null;
     if (!name || !area || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !collectionIds.length ||
-      collectionIds.some((id) => !/^\d+$/.test(id)) || (staffId && !/^\d+$/.test(staffId)) ||
-      (vehicleId && !/^\d+$/.test(vehicleId))) {
+      collectionIds.some((id) => !uuidPattern.test(id)) || (staffId && !uuidPattern.test(staffId)) ||
+      (vehicleId && !uuidPattern.test(vehicleId))) {
       return res.status(400).json({ error: 'Route details and at least one valid collection stop are required.' });
     }
     const companyId = req.company.companyId;
     await client.query('BEGIN');
     if (staffId) {
       const staff = await client.query(
-        `SELECT 1 FROM company_employees WHERE id = $1 AND company_id = $2 AND status = 'Active'`,
-        [Number(staffId), companyId]
+        `SELECT 1 FROM company_staff WHERE id = $1 AND company_id = $2 AND status = 'Active'`,
+        [staffId, companyId]
       );
       if (!staff.rowCount) throw Object.assign(new Error('The selected staff member is not active in this company.'), { statusCode: 400 });
     }
     if (vehicleId) {
       const vehicle = await client.query(
         `SELECT 1 FROM company_vehicles WHERE id = $1 AND company_id = $2 AND status = 'Available'`,
-        [Number(vehicleId), companyId]
+        [vehicleId, companyId]
       );
       if (!vehicle.rowCount) throw Object.assign(new Error('The selected vehicle is not available in this company.'), { statusCode: 400 });
     }
     const assigned = await client.query(
       `SELECT id FROM collections
        WHERE company_id = $1 AND route_id IS NULL AND COALESCE(status, 'Scheduled') = 'Scheduled'
-         AND id = ANY($2::integer[]) FOR UPDATE`,
-      [companyId, collectionIds.map(Number)]
+         AND id = ANY($2::uuid[]) FOR UPDATE`,
+      [companyId, collectionIds]
     );
     if (assigned.rowCount !== collectionIds.length) {
       throw Object.assign(new Error('One or more selected collections are unavailable or belong to another company.'), { statusCode: 409 });
     }
     const route = await client.query(
-      `INSERT INTO company_routes (company_id, name, area, route_date, staff_id, vehicle_id)
+      `INSERT INTO company_routes (company_id, name, area, service_date, staff_id, vehicle_id)
        VALUES ($1, $2, $3, $4::date, $5, $6) RETURNING id`,
-      [companyId, name, area, date, staffId ? Number(staffId) : null, vehicleId ? Number(vehicleId) : null]
+      [companyId, name, area, date, staffId, vehicleId]
     );
     await client.query(
-      'UPDATE collections SET route_id = $1 WHERE company_id = $2 AND id = ANY($3::integer[])',
-      [route.rows[0].id, companyId, collectionIds.map(Number)]
+      'UPDATE collections SET route_id = $1 WHERE company_id = $2 AND id = ANY($3::uuid[])',
+      [route.rows[0].id, companyId, collectionIds]
     );
     await client.query('COMMIT');
     return res.status(201).json({ id: String(route.rows[0].id), message: 'Route created successfully.' });
@@ -1250,13 +1280,13 @@ app.post('/api/company/routes', requireCompany, async (req, res) => {
 app.patch('/api/company/routes/:id/status', requireCompany, async (req, res) => {
   try {
     const status = String(req.body?.status ?? '').trim();
-    if (!/^\d+$/.test(req.params.id) || !['Planned', 'In Progress', 'Completed'].includes(status)) {
-      return res.status(400).json({ error: 'A valid route ID and status are required.' });
+    if (!uuidPattern.test(req.params.id) || !['Planned', 'In Progress', 'Completed'].includes(status)) {
+      return res.status(400).json({ error: 'A valid route UUID and status are required.' });
     }
     const result = await pool.query(
       `UPDATE company_routes SET status = $1 WHERE id = $2 AND company_id = $3
        RETURNING id::text AS id, status`,
-      [status, Number(req.params.id), req.company.companyId]
+      [status, req.params.id, req.company.companyId]
     );
     if (!result.rowCount) return res.status(404).json({ error: 'Route was not found.' });
     return res.json(result.rows[0]);
@@ -1267,10 +1297,10 @@ app.patch('/api/company/routes/:id/status', requireCompany, async (req, res) => 
 
 app.delete('/api/company/routes/:id', requireCompany, async (req, res) => {
   try {
-    if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'Route ID must be a positive integer.' });
+    if (!uuidPattern.test(req.params.id)) return res.status(400).json({ error: 'Route ID must be a UUID.' });
     const result = await pool.query(
       'DELETE FROM company_routes WHERE id = $1 AND company_id = $2 RETURNING id',
-      [Number(req.params.id), req.company.companyId]
+      [req.params.id, req.company.companyId]
     );
     if (!result.rowCount) return res.status(404).json({ error: 'Route was not found.' });
     return res.json({ message: 'Route deleted successfully.' });
@@ -1279,7 +1309,7 @@ app.delete('/api/company/routes/:id', requireCompany, async (req, res) => {
   }
 });
 
-app.get('/api/companies', async (_req, res) => {
+app.get('/api/companies', requireAdmin, async (_req, res) => {
   try {
     const result = await pool.query(`
       SELECT id, name, email, phone, office_phone, address, tin, business_description,
@@ -1371,6 +1401,14 @@ app.post('/api/companies/:companyId/employees', requireCompany, requireOwnCompan
        RETURNING id::text AS id, employee_id AS "employeeId", department, role, status, created_at AS "createdAt"`,
       [companyId, user.rows[0].id, employeeId, department, role, status]
     );
+    await client.query(
+      `INSERT INTO company_staff (company_id, name, phone, position, status, employee_user_id)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (employee_user_id) DO UPDATE SET
+         company_id = EXCLUDED.company_id, name = EXCLUDED.name, phone = EXCLUDED.phone,
+         position = EXCLUDED.position, status = EXCLUDED.status`,
+      [companyId, name, phone, role, status, user.rows[0].id]
+    );
     await client.query('COMMIT');
     return res.status(201).json({ ...employee.rows[0], name, phone, email, lastLogin: null });
   } catch (error) {
@@ -1411,6 +1449,14 @@ app.patch('/api/companies/:companyId/employees/:employeeId', requireCompany, req
     await client.query(
       'UPDATE users SET full_name = $1, phone = $2, email = $3 WHERE id = $4',
       [name, phone, email, employee.rows[0].user_id]
+    );
+    await client.query(
+      `INSERT INTO company_staff (company_id, name, phone, position, status, employee_user_id)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (employee_user_id) DO UPDATE SET
+         company_id = EXCLUDED.company_id, name = EXCLUDED.name, phone = EXCLUDED.phone,
+         position = EXCLUDED.position, status = EXCLUDED.status`,
+      [companyId, name, phone, role, status, employee.rows[0].user_id]
     );
     await client.query('COMMIT');
     return res.json({ ...employee.rows[0], name, phone, email, department, role, status });
@@ -1556,7 +1602,7 @@ app.post('/api/companies', async (req, res) => {
   }
 });
 
-app.patch('/api/companies/:id/approve', async (req, res) => {
+app.patch('/api/companies/:id/approve', requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(
       `UPDATE companies SET status = 'Approved' WHERE id = $1 RETURNING id, name, email, phone, address, tin, status`,
@@ -1573,7 +1619,7 @@ app.patch('/api/companies/:id/approve', async (req, res) => {
   }
 });
 
-app.patch('/api/companies/:id/cancel', async (req, res) => {
+app.patch('/api/companies/:id/cancel', requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(
       `UPDATE companies SET status = 'Cancelled' WHERE id = $1 RETURNING id, name, email, phone, address, tin, status`,
@@ -1590,7 +1636,7 @@ app.patch('/api/companies/:id/cancel', async (req, res) => {
   }
 });
 
-app.delete('/api/companies/:id', async (req, res) => {
+app.delete('/api/companies/:id', requireAdmin, async (req, res) => {
   try {
     const result = await pool.query('DELETE FROM companies WHERE id = $1 RETURNING id', [req.params.id]);
     if (result.rowCount === 0) {

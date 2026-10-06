@@ -29,6 +29,7 @@ function readPersistedSession(): PersistedSession | null {
 type GoogleIdentity = { accounts: { id: { initialize: (options: { client_id: string; callback: (response: { credential: string }) => void }) => void; renderButton: (element: HTMLElement, options: { theme: string; size: string; width: number }) => void } } }
 declare global { interface Window { google?: GoogleIdentity } }
 const adminEmail = (import.meta.env.VITE_ADMIN_EMAIL as string | undefined)?.toLowerCase() ?? 'diope2diope@gmail.com'
+let googleIdentityInitialized = false
 const CustomerLocationMap = lazy(() => import('./CustomerLocationMap'))
 const titleCase = (value: string) => value.toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase())
 const rwandaProvinces = Object.keys(rwandaLocations).map(titleCase)
@@ -97,7 +98,7 @@ function App() {
   }, [adminPortal, adminToken, companyPortal, companyContext, customerPortal, customerId])
   const openDialog = (next: Exclude<Dialog, null>) => { setDialog(next); setSubmitted(false); setForgotPassword(false); setAuthError(''); setMobileOpen(false) }
   const closeDialog = () => setDialog(null)
-  const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
+  const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5001'
   const googleSignIn = async (credential?: string) => {
     if (!credential) { setAuthError('Google verification is unavailable until a Google client ID is configured.'); return }
     const response = await fetch(`${apiBase}/api/auth/google`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ credential }) })
@@ -483,14 +484,20 @@ function CustomerRegisterDialog({ authError, onClose, onSubmit }: { authError: s
 }
 
 function Dialog({ type, submitted, forgotPassword, authError, onGoogleSignIn, onCustomerRegister, onForgotPassword, onBackToSignIn, onClose, onSubmit }: { type: Exclude<Dialog, null>; submitted: boolean; forgotPassword: boolean; authError: string; onGoogleSignIn: (credential?: string) => void | Promise<void>; onCustomerRegister: () => void; onForgotPassword: () => void; onBackToSignIn: () => void; onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void | Promise<void> }) {
+  const googleSignInCallback = useRef(onGoogleSignIn)
+  googleSignInCallback.current = onGoogleSignIn
   useEffect(() => {
     const element = document.getElementById('google-signin-button')
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined
     if (!element || !clientId || !window.google) return
-    window.google.accounts.id.initialize({
-      client_id: clientId,
-      callback: ({ credential }) => void onGoogleSignIn(credential),
-    })
+    if (!googleIdentityInitialized) {
+      window.google.accounts.id.initialize({
+        client_id: clientId,
+        callback: ({ credential }) => void googleSignInCallback.current(credential),
+      })
+      googleIdentityInitialized = true
+    }
+    element.replaceChildren()
     window.google.accounts.id.renderButton(element, {
       theme: 'outline',
       size: 'large',

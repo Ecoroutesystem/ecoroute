@@ -1,4 +1,4 @@
-const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
+const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5001'
 
 export function companyFetch(path: string, init?: RequestInit) {
   const headers = new Headers(init?.headers)

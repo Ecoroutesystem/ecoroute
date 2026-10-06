@@ -5,7 +5,7 @@ import './App.css'
 
 type Customer = { id: string; name: string; phone?: string; location: string; plan: string; balance: string; status: string }
 type Payment = { id: string; customerId: string; customer: string; amount: number; method: string; reference: string; paidAt: string }
-const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
+const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5001'
 const formatRwfAmount = new Intl.NumberFormat('en-RW', { maximumFractionDigits: 0 })
 const currency = (amount: number) => `RWF ${formatRwfAmount.format(amount)}`
 const formatDate = (value: string) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })

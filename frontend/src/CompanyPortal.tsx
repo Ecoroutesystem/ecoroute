@@ -145,6 +145,7 @@ export default function CompanyPortal({ companyId, userName, userRole, onLogout 
 function CompanyDashboard({ companyId, onOpen }: { companyId: string; onOpen: (view: string) => void }) {
   const [customers, setCustomers] = useState<Customer[]>([])
   const [collections, setCollections] = useState<Collection[]>([])
+  const [vehicles, setVehicles] = useState<Vehicle[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -153,14 +154,16 @@ function CompanyDashboard({ companyId, onOpen }: { companyId: string; onOpen: (v
       setLoading(true)
       setError('')
       try {
-        const [customersResponse, collectionsResponse] = await Promise.all([
+        const [customersResponse, collectionsResponse, vehiclesResponse] = await Promise.all([
           companyFetch(`/api/customers?companyId=${encodeURIComponent(companyId)}`),
           companyFetch('/api/company/collections'),
+          companyFetch('/api/company/vehicles'),
         ])
 
-        const [customersResult, collectionsResult] = await Promise.all([
+        const [customersResult, collectionsResult, vehiclesResult] = await Promise.all([
           customersResponse.json() as Promise<Customer[] | { error?: string }>,
           collectionsResponse.json() as Promise<Collection[] | { error?: string }>,
+          vehiclesResponse.json() as Promise<Vehicle[] | { error?: string }>,
         ])
 
         if (!customersResponse.ok) {
@@ -169,9 +172,13 @@ function CompanyDashboard({ companyId, onOpen }: { companyId: string; onOpen: (v
         if (!collectionsResponse.ok) {
           throw new Error('error' in collectionsResult ? collectionsResult.error : 'Collection data could not be loaded')
         }
+        if (!vehiclesResponse.ok) {
+          throw new Error('error' in vehiclesResult ? vehiclesResult.error : 'Vehicle data could not be loaded')
+        }
 
         setCustomers(customersResult as Customer[])
         setCollections(collectionsResult as Collection[])
+        setVehicles(vehiclesResult as Vehicle[])
       } catch (requestError) {
         setError(requestError instanceof Error ? requestError.message : 'Dashboard data could not be loaded')
       } finally {
@@ -215,7 +222,7 @@ function CompanyDashboard({ companyId, onOpen }: { companyId: string; onOpen: (v
         <div className="admin-metric coral">
           <span><Truck size={18} /></span>
           <small>Active vehicles</small>
-          <strong>{loading ? '...' : new Set(collections.map((collection) => collection.vehicle).filter((vehicle) => vehicle && vehicle !== 'Unassigned')).size}</strong>
+          <strong>{loading ? '...' : vehicles.filter((vehicle) => vehicle.status === 'Available').length}</strong>
           <em>Fleet status</em>
         </div>
       </section>

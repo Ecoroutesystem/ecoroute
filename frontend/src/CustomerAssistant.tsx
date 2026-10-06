@@ -6,7 +6,7 @@ type Customer = { id: string; name: string; status: string }
 type Message = { role: 'assistant' | 'user'; text: string }
 type AssistantResponse = { answer?: string; error?: string; model?: string }
 
-const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
+const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:5001'
 const suggestions = [
   { icon: CalendarDays, label: 'My schedule', prompt: 'When is my next collection, and what is my recent collection history?' },
   { icon: CreditCard, label: 'My payments', prompt: 'Summarize my current balance and recent payment history.' },
